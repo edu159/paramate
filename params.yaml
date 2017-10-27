@@ -1,0 +1,32 @@
+STUDY:
+  name: "LJ fluid thermodynamic properties"
+  version: 1.0
+
+EXEC:
+  files:
+    - name: lammps.in
+      params:
+        - name: velocity
+          mode: linear
+          value: [10.0, 20.0]
+
+        - name: pressure
+          mode: fixed
+          value: 1.0
+
+    - name: cfd.in
+      params:
+        - name: velocity
+          mode: linear
+          value: [10.0, 20.0]
+
+BUILD:
+  file: 
+    - name: system.in
+      params:
+         - name: size
+           mode: combinatoric
+           value: [100, 200, 300]
+
+POSTPROC:
+  mode: remote
