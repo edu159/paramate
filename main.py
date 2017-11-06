@@ -2,6 +2,7 @@ import yaml
 import os
 import glob
 import shutil
+import re
 
 SRC_DIR = os.path.dirname(os.path.realpath(__file__))
 DEFAULTS_DIR = os.path.join(SRC_DIR, "defaults")
@@ -15,6 +16,7 @@ class PostprocSection:
 class BuildSection:
     pass
 
+#TODO: Decouple allowed sections from Param file to make it general
 class ParamFile:
     def __init__(self, allowed_sections=None):
         self.ALLOWED_SECTIONS = {"STUDY": StudySection, 
@@ -56,16 +58,18 @@ class ParamFile:
             raise Exception()
 
 
-
-
 class StudyBuilder:
     DEFAULT_DIRECTORIES = ["template/build", "template/exec", "template/output", "template/postproc"]
-    DEFAULT_FILES = ["template/exec.sh", "template/build.sh", "template/README", "params.yaml", 
+    DEFAULT_FILES = ["template/exec.sh", "template/build.sh", "README", "params.yaml", 
                      "generators.py"] 
-    def __init__(self, param_file, only_one=False, long_name=False):
+    def __init__(self, study_case_path, only_one=False, long_name=True):
+        #TODO: Check if the study case directory is empty and in good condition
+        self.study_case_path = study_case_path
+        os.chdir(study_case_path)
         self.only_one = only_one
         self.long_name = long_name
-        self.param_file = param_file
+        self.param_file = None
+        self._load_config_file()
         self.build_params = []
         self.exec_params = []
         self.build_params = self._build_param_list("BUILD")
@@ -79,6 +83,13 @@ class StudyBuilder:
                                                             "combinatoric")
         self._check_params_validity()
 
+    def _load_config_file(self):
+        try:
+            self.param_file = ParamFile()
+            self.param_file.load()
+        except:
+            pass
+
     def _get_params_by_mode(self, params, mode):
         return [p for p in params if p["mode"] == mode]
 
@@ -88,6 +99,7 @@ class StudyBuilder:
             params  = list(f["params"])
             for p in params:
                 p.update({"filename": f["name"]})
+                p.update({"section": section.lower()})
             params_out.extend(params)
         return params_out
 
@@ -100,8 +112,6 @@ class StudyBuilder:
                 raise Exception("All linear style param values list should have the same size.")
         self.linear_param_size = param_size
 
-    def _build_name_string():
-        pass
 
     def _gen_comb_instance(self, instance, params):
         if params:
@@ -112,12 +122,43 @@ class StudyBuilder:
                 self._gen_comb_instance(instance + [param], params[1:])
         else:
             self._create_instance(instance)
-            print instance
 
     def _create_instance(self, instance):
-        pass
+        dirname = self._build_instance_string(instance)
+        shutil.copytree("template", dirname)
+        self._replace_placeholders(dirname, instance)
 
-        
+
+    def _replace_placeholders(self, dirname, instance):
+        # Find files to modify. Append name of the section as the parent folder.
+        files = reduce(lambda r, d: r.update({os.path.join(dirname, d["section"], d["filename"]):{}}) or r, instance, {})
+        # Add param:value pairs
+        for param in instance:
+            fname = os.path.join(dirname, param["section"], param["filename"])
+            files[fname].update({param["name"]: param["value"]})
+
+        for fname, params in files.items():
+            try:
+                lines = []
+                with open(fname, 'r') as placeholder_file:
+                    lines = placeholder_file.readlines()                                                                                                                                                                                                 
+                    for ln, line in enumerate(lines):
+                        line_opts = set(re.findall(r'\$\[([a-zA-Z0-9\-]+?)\]', line))
+                        for opt in line_opts:
+                            try:
+                               lines[ln] = lines[ln].replace("$[" + opt + "]", str(params[opt]))
+                            except KeyError as error:
+                                # All placeholders has to be replaced and must be in params.
+                                raise Exception("Parameter '%s' not present." % opt)
+                with open(fname, 'w+') as replaced_file:
+                    replaced_file.writelines(lines)
+
+             
+            except Exception as error:
+                print "ENTRO"
+                print error
+            #print "".join(lines)
+
 
     def generate_instances(self):
         instance = []
@@ -133,16 +174,14 @@ class StudyBuilder:
         
     def _build_instance_string(self, instance):
         instance_string = ""
+        print instance
         if self.long_name:
             for param in instance:
                 instance_string += "_%s%s" % (param["name"], param["value"])
             instance_string = instance_string[1:]
         else:
             pass
-
-            
-            
-
+        return instance_string
 
     @classmethod 
     def create_dir_structure(cls, path, study_name):
@@ -186,11 +225,8 @@ class ConfigSection:
         _check_opts_recursive(self.section_opts, self.required_opts)
 
 if __name__ == "__main__":
-    folder = "./"
-    param_file = ParamFile()
-    param_file.load()
-    StudyBuilder.create_dir_structure("/home/edu/Desktop/repositories/parampy", "study_test")
-    study =  StudyBuilder(param_file)
+    #StudyBuilder.create_dir_structure("/home/eduardo/Desktop/repositories/parampy", "study_test")
+    study =  StudyBuilder("study_test")
     study.generate_instances()
      
 

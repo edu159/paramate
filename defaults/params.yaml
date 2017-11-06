@@ -1,5 +1,5 @@
 STUDY:
-  name: ""
+  name: "LJ fluid thermodynamic properties"
   version: 1.0
 
 EXEC:
@@ -10,10 +10,6 @@ EXEC:
           mode: linear
           value: [10.0, 20.0]
 
-        - name: pressure
-          mode: fixed
-          value: 1.0
-
     - name: cfd.in
       params:
         - name: velocity
@@ -21,12 +17,16 @@ EXEC:
           value: [10.0, 20.0]
 
 BUILD:
-  file: 
+  files: 
     - name: system.in
       params:
          - name: size
            mode: combinatoric
            value: [100, 200, 300]
+
+         - name: kk
+           mode: combinatoric
+           value: [600, 300]
 
 POSTPROC:
   mode: remote
