@@ -3,6 +3,7 @@ import os
 import glob
 import shutil
 import re
+import sys
 
 SRC_DIR = os.path.dirname(os.path.realpath(__file__))
 DEFAULTS_DIR = os.path.join(SRC_DIR, "defaults")
@@ -28,13 +29,20 @@ class ParamFile:
         self.params_data = {}
         self.sections ={}
 
+    @staticmethod
+    def paramfile_exists(path):
+        p = os.path.join(path, "params.yaml")
+        return os.path.exists(p)
+        
+
     def load(self, fname="params.yaml"):
         try:
             with open(fname, 'r') as paramfile:
                 self.params_data = yaml.load(paramfile)
+        except IOError:
+            raise Exception("File params.yaml not found!")
         except Exception as error:
-            print "Error in parameters file:"
-            print "\t", error
+            raise Exception("Parsing error: \n" + str(error))
         self._load_sections()
         #print self.params_data
         self.params_fname = fname
@@ -62,12 +70,13 @@ class StudyBuilder:
     DEFAULT_DIRECTORIES = ["template/build", "template/exec", "template/output", "template/postproc"]
     DEFAULT_FILES = ["template/exec.sh", "template/build.sh", "README", "params.yaml", 
                      "generators.py"] 
-    def __init__(self, study_case_path, only_one=False, long_name=True):
+    def __init__(self, study_case_path, only_one=False, short_name=False):
         #TODO: Check if the study case directory is empty and in good condition
         self.study_case_path = study_case_path
         os.chdir(study_case_path)
         self.only_one = only_one
-        self.long_name = long_name
+        self.short_name = short_name
+        self.instance_counter = 0
         self.param_file = None
         self._load_config_file()
         self.build_params = []
@@ -82,13 +91,42 @@ class StudyBuilder:
                                                             self.exec_params,
                                                             "combinatoric")
         self._check_params_validity()
+        self.nof_instances = self._compute_nof_instances()
+
+    def _compute_nof_instances(self):
+        nof_instances = 1
+        if self.linear_params:
+            nof_instances = len(self.linear_params[0]["value"])
+        for param in self.combinatoric_params:
+            nof_instances *= len(param["value"])
+        return nof_instances
+
+    @staticmethod
+    def templatedir_exists(path):
+        p = os.path.join(path, "template")
+        return os.path.exists(p)
+
+    @staticmethod
+    def clean_study():
+        try:
+            for f in glob.glob("./[0-9]*"):
+                shutil.rmtree(f)
+        except Exception as error:
+            raise Exception("Error:\n" + str(error))
+
+
+
+    def _create_instance_infofile(self, instance):
+        f = os.path.join(self._build_instance_string(instance), "instance.info")
+        open(f, 'a').close()
 
     def _load_config_file(self):
         try:
             self.param_file = ParamFile()
             self.param_file.load()
-        except:
-            pass
+        except Exception as error:
+            raise Exception(error)
+            
 
     def _get_params_by_mode(self, params, mode):
         return [p for p in params if p["mode"] == mode]
@@ -121,11 +159,14 @@ class StudyBuilder:
                 param["value"] = val
                 self._gen_comb_instance(instance + [param], params[1:])
         else:
+            self.instance_counter += 1
             self._create_instance(instance)
 
+    #TODO: Create a file with instance information
     def _create_instance(self, instance):
         dirname = self._build_instance_string(instance)
         shutil.copytree("template", dirname)
+        self._create_instance_infofile(instance)
         self._replace_placeholders(dirname, instance)
 
 
@@ -159,9 +200,10 @@ class StudyBuilder:
                 print error
             #print "".join(lines)
 
-
+    #TODO: Decouple state and behaviour of instances into a new class
     def generate_instances(self):
         instance = []
+        self.instance_counter = 0
         for _ in xrange(self.linear_param_size):
             for lp in self.linear_params:
                 param = lp.copy()
@@ -173,14 +215,12 @@ class StudyBuilder:
             instance = []
         
     def _build_instance_string(self, instance):
-        instance_string = ""
-        print instance
-        if self.long_name:
+        nof_figures = len(str(self.nof_instances))
+        instance_string = "%0*d" % (nof_figures, self.instance_counter)
+        
+        if not self.short_name:
             for param in instance:
                 instance_string += "_%s%s" % (param["name"], param["value"])
-            instance_string = instance_string[1:]
-        else:
-            pass
         return instance_string
 
     @classmethod 
@@ -198,35 +238,60 @@ class StudyBuilder:
                 shutil.copy(os.path.join(DEFAULTS_DIR, os.path.basename(f)), 
                             os.path.join(study_path, f))
         else:
-            print "Error: Directory could not be created!"
+            raise Exception("Directory '%s' already exists!" % study_path)
 
-
-class ConfigSection:
-    def __init__(self, section_name, section_opts, required_opts):
-        self.section_name = section_name
-        self.section_opts = section_opts
-        self.required_opts = required_opts
-        self._check_opts()
-
-    def _check_opts(self):
-        def _check_opts_recursive(opts_dict, opts_types_dict):
-            for opt_name, opt_val in opts_dict.items():
-                try:
-                    types = opts_types_dict[opt_name]
-                except Exception as error:
-                    print "Option not found: ", error
-                if type(types) is dict:
-                    _check_opts_recursive(opts_dict[opt_name], opts_types_dict[opt_name])
-                elif type(types) is tuple:
-                    if type(opt_val) not in types:
-                        print "Type not correct in option ", opt_name, " value: ", opt_val
-                elif type(types) is str and opt_val not in types.split('|'):
-                    print "Type incorrect in option ", opt_name, " value: ", opt_val
-        _check_opts_recursive(self.section_opts, self.required_opts)
 
 if __name__ == "__main__":
-    #StudyBuilder.create_dir_structure("/home/eduardo/Desktop/repositories/parampy", "study_test")
-    study =  StudyBuilder("study_test")
-    study.generate_instances()
-     
+    import argparse
 
+    parser = argparse.ArgumentParser(description="Program to generate parameter studies.")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-v", "--verbose", action="store_true")
+    group.add_argument("-q", "--quiet", action="store_true")
+    actions_group = parser.add_mutually_exclusive_group()
+    actions_group.add_argument("-c", "--create", metavar="study_name", help="Create an empty study template.")
+    actions_group.add_argument("-g", "--generate", action="store_true", help="Generate the instances of the study based on the 'params.yaml' file.")
+    actions_group.add_argument("--check", action="store_true", 
+			help="Check if the study is consistent with 'params.yaml' file.")
+    actions_group.add_argument("--clean", action="store_true", help="Clean the instances of the study.")
+    actions_group.add_argument("-i", "--info", action="store_true", help="Get a resumed info of the study.")
+    parser.add_argument("--shortname", action="store_true", default=False, help="Study instances are short named.")
+    args = parser.parse_args()
+
+    if args.quiet:
+	print "quiet"
+    elif args.verbose:
+        print "verbose"
+    elif args.create:
+        study_name = args.create
+        try:
+            StudyBuilder.create_dir_structure("/home/eduardo/Desktop/repositories/parampy", study_name)
+        except Exception as error:
+            sys.exit(error)
+    elif args.generate:
+        if not ParamFile.paramfile_exists("."):
+            sys.exit("Error:\nParameter file 'params.yaml' do not exists!")
+        if not StudyBuilder.templatedir_exists("."):
+            sys.exit("Error:\nTemplate directory do not exists!")
+        try:
+            study =  StudyBuilder(".", short_name=args.shortname)
+        except Exception as error:
+            sys.exit(error)
+        study.generate_instances()
+    elif args.clean:
+        if not ParamFile.paramfile_exists("."):
+            sys.exit("Error:\nParameter file 'params.yaml' do not exists!")
+        if not StudyBuilder.templatedir_exists("."):
+            sys.exit("Error:\nTemplate directory do not exists!")
+        try:
+            StudyBuilder.clean_study()
+        except Exception as error:
+            sys.exit(error)
+        
+
+
+
+    else:
+        pass
+    #study =  StudyBuilder("study_test")
+    #study.generate_instances()
