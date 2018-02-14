@@ -4,6 +4,7 @@ import glob
 import shutil
 import re
 import sys
+import remote
 
 SRC_DIR = os.path.dirname(os.path.realpath(__file__))
 DEFAULTS_DIR = os.path.join(SRC_DIR, "defaults")
@@ -92,6 +93,7 @@ class StudyBuilder:
                                                             "combinatoric")
         self._check_params_validity()
         self.nof_instances = self._compute_nof_instances()
+        self.manifest_lines = []
 
     def _compute_nof_instances(self):
         nof_instances = 1
@@ -161,6 +163,10 @@ class StudyBuilder:
         else:
             self.instance_counter += 1
             self._create_instance(instance)
+            self._add2manifest(self.instance_counter, instance)
+
+    def _add2manifest(instance_counter, instance_name):
+        self.manifest_lines.append("%d : %s")
 
     #TODO: Create a file with instance information
     def _create_instance(self, instance):
@@ -213,7 +219,10 @@ class StudyBuilder:
 
             self._gen_comb_instance(instance, self.combinatoric_params)
             instance = []
-        
+
+        with open("cases.txt", 'w') as manifest_file:
+            manifest_file.writelines(self.manifest_lines)
+            
     def _build_instance_string(self, instance):
         nof_figures = len(str(self.nof_instances))
         instance_string = "%0*d" % (nof_figures, self.instance_counter)
@@ -255,6 +264,10 @@ if __name__ == "__main__":
 			help="Check if the study is consistent with 'params.yaml' file.")
     actions_group.add_argument("--clean", action="store_true", help="Clean the instances of the study.")
     actions_group.add_argument("-i", "--info", action="store_true", help="Get a resumed info of the study.")
+    actions_group.add_argument("--createremote", action="store_true", help="Create a remote template.")
+    actions_group.add_argument("--addremote", action="store_true", help="Add a remote.")
+    actions_group.add_argument("--delremote", action="store_true", help="Delete a remote.")
+    actions_group.add_argument("--listremote", action="store_true", help="List all saved remotes.")
     parser.add_argument("--shortname", action="store_true", default=False, help="Study instances are short named.")
     args = parser.parse_args()
 
@@ -287,10 +300,14 @@ if __name__ == "__main__":
             StudyBuilder.clean_study()
         except Exception as error:
             sys.exit(error)
+    elif args.createremote:
+        remote = remote.Remote()
+        try:
+            remote.create_remote_template(".")
+        except Exception as error:
+            sys.exit(error)
         
-
-
-
+        
     else:
         pass
     #study =  StudyBuilder("study_test")
