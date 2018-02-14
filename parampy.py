@@ -53,9 +53,10 @@ class ParamFile:
         for section_name, section_opts in  self.params_data.items():
             try:
                 section_class =  self.ALLOWED_SECTIONS[section_name]
-                self.sections[section_name] = section_class(section_name, section_opts)
+                # self.sections[section_name] = section_class(section_name, section_opts)
             except Exception as error:
-                print "Error: section not found ", error 
+                if section_name == "STUDY":
+                    print "Error: Section 'STUDY' is mandatory in 'params.yaml'."
             
     def add_section(self, section, opts):
         self.config_data[section] = opts
@@ -91,8 +92,9 @@ class StudyBuilder:
         self.combinatoric_params = self._get_params_by_mode(self.build_params +
                                                             self.exec_params,
                                                             "combinatoric")
-        self._check_params_validity()
+        linear_multivalued_params = self._check_linear_params()
         self.nof_instances = self._compute_nof_instances()
+        self.multivalued_params = self.combinatoric_params + linear_multivalued_params
         self.manifest_lines = []
 
     def _compute_nof_instances(self):
@@ -117,7 +119,6 @@ class StudyBuilder:
             raise Exception("Error:\n" + str(error))
 
 
-
     def _create_instance_infofile(self, instance):
         f = os.path.join(self._build_instance_string(instance), "instance.info")
         open(f, 'a').close()
@@ -135,22 +136,32 @@ class StudyBuilder:
 
     def _build_param_list(self, section):
         params_out = []
-        for f in self.param_file[section]["files"]:
-            params  = list(f["params"])
-            for p in params:
-                p.update({"filename": f["name"]})
-                p.update({"section": section.lower()})
-            params_out.extend(params)
+        # Sections can be not present
+        try:
+            for f in self.param_file[section]["files"]:
+                params  = list(f["params"])
+                for p in params:
+                    p.update({"filename": f["name"]})
+                    p.update({"section": section.lower()})
+                params_out.extend(params)
+        except KeyError:
+            pass
         return params_out
 
             
-    def _check_params_validity(self):
-        param_size = len(self.linear_params[0]["value"])
-        for p in self.linear_params[1:]:
-            p_size = len(p["value"])
-            if p_size != param_size:
-                raise Exception("All linear style param values list should have the same size.")
-        self.linear_param_size = param_size
+    def _check_linear_params(self):
+        max_param_size = max([len(p["value"]) for p in self.linear_params])
+        multivalued_params = []
+        for p in self.linear_params:
+            if len(p["value"]) == 1:
+                p["value"] = p["value"] * max_param_size
+            elif len(p["value"]) == max_param_size:
+                multivalued_params.append(p)
+            elif len(p["value"]) != max_param_size:
+                raise Exception("Error: All linear params lists must be same size or one.")
+        self.linear_param_size = max_param_size
+        print multivalued_params
+        return multivalued_params
 
 
     def _gen_comb_instance(self, instance, params):
@@ -163,10 +174,10 @@ class StudyBuilder:
         else:
             self.instance_counter += 1
             self._create_instance(instance)
-            self._add2manifest(self.instance_counter, instance)
+            self._add2manifest(instance)
 
-    def _add2manifest(instance_counter, instance_name):
-        self.manifest_lines.append("%d : %s")
+    def _add2manifest(self, instance):
+        self.manifest_lines.append("%s : [CREATED]\n" % self._build_instance_string(instance))
 
     #TODO: Create a file with instance information
     def _create_instance(self, instance):
@@ -202,7 +213,6 @@ class StudyBuilder:
 
              
             except Exception as error:
-                print "ENTRO"
                 print error
             #print "".join(lines)
 
@@ -226,10 +236,13 @@ class StudyBuilder:
     def _build_instance_string(self, instance):
         nof_figures = len(str(self.nof_instances))
         instance_string = "%0*d" % (nof_figures, self.instance_counter)
-        
+        multivalued_keys = [(d["section"], d["name"], d["filename"]) for d in self.multivalued_params] 
         if not self.short_name:
             for param in instance:
-                instance_string += "_%s%s" % (param["name"], param["value"])
+                print param.keys()
+                print multivalued_keys
+                if (param["section"], param["name"], param["filename"]) in multivalued_keys:
+                    instance_string += "_%s%s" % (param["name"], param["value"])
         return instance_string
 
     @classmethod 
@@ -268,6 +281,11 @@ if __name__ == "__main__":
     actions_group.add_argument("--addremote", action="store_true", help="Add a remote.")
     actions_group.add_argument("--delremote", action="store_true", help="Delete a remote.")
     actions_group.add_argument("--listremote", action="store_true", help="List all saved remotes.")
+    actions_group.add_argument("-u", "--upload-case", metavar="case_name", help="Upload case to remote.")
+    actions_group.add_argument("-U", "--upload-study", metavar="study_name", help="Upload study to remote.")
+    actions_group.add_argument("-s", "--submit-case", metavar="case_name", help="Submit case to execution.")
+    actions_group.add_argument("-S", "--submit-study", metavar="study_name", help="Submit case to execution.")
+
     parser.add_argument("--shortname", action="store_true", default=False, help="Study instances are short named.")
     args = parser.parse_args()
 
@@ -306,7 +324,15 @@ if __name__ == "__main__":
             remote.create_remote_template(".")
         except Exception as error:
             sys.exit(error)
-        
+    elif args.upload_case:
+        try:
+            # remote = remote.
+            # r.load("./remote.yaml")
+            # passwd = getpass.getpass("Password: ")
+            # r.connect(passwd)
+            # sm = remote.StudyMonitor(remote
+        except Exception as error:
+            sys.exit(error)
         
     else:
         pass

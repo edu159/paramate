@@ -160,11 +160,9 @@ class StudyManager:
         tar_name = self._compress(name, path)
         upload_src = os.path.join(self.tmp_dir, tar_name)
         upload_dest = remote_workdir
-        print upload_src, upload_dest
         self.remote.upload(upload_src, upload_dest)
         extract_src = os.path.join(upload_dest, tar_name)
         extract_dest = upload_dest
-        print "tar -xzf %s --directory %s" % (extract_src, extract_dest)
         out = self.remote.command("tar -xzf %s --directory %s" % (extract_src, extract_dest))
         os.remove(upload_src)
         if not keep_targz:
@@ -173,7 +171,6 @@ class StudyManager:
     def upload_case(self, keep_targz=False, force=False):
         # self._case_clean()
         remote_workdir = os.path.join(self.remote.remote_workdir, self.study_name)
-        print "R", remote_workdir
         if not self.remote.remote_dir_exists(remote_workdir):
             out = self.remote.command("mkdir %s" % remote_workdir)
         try:
@@ -203,9 +200,6 @@ class StudyManager:
 
     def submit_study(self, name):
         pass
-
-
-        
 
     def decompress_study(self):
         pass
