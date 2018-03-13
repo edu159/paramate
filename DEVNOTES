@@ -1,0 +1,6 @@
+Upload case:
+1) Look for remote in CONFIGDIR if --remote present.
+2) Look for remote in dirname(case_dir) (The study is inside a case)
+Upload study:
+1) Look for remote in CONFIGDIR if --remote present.
+2) Look for remote in case_dir (The study is inside a case)

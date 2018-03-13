@@ -7,6 +7,7 @@ import getpass
 import tarfile
 from scp import SCPClient
 import socket
+from parampy import StudyFile
 
 
 #TODO: Refactor Remote to separate configuration-related stuff
@@ -108,8 +109,8 @@ class Remote:
                              password=passwd, timeout=timeout)
         self.scp = SCPClient(self.ssh.get_transport())
 
-    def command(self, cmd):
-        stdin, stdout, stderr = self.ssh.exec_command(cmd)
+    def command(self, cmd, timeout=None):
+        stdin, stdout, stderr = self.ssh.exec_command(cmd, timeout=timeout)
         self.command_status = stdout.channel.recv_exit_status()
         error = stderr.readlines()
         if error:
@@ -147,14 +148,22 @@ class StudyManager:
     def __init__(self, remote, study_path=None, case_path=None):
         assert study_path is not None or case_path is not None
         self.remote = remote
-        self.study_path = study_path
+        if study_path is not None:
+            self.study_path = os.path.abspath(study_path)
+            self.study_file = StudyFile(path=self.study_path)
+        else:
+            self.study_path = None
         self.case_path = case_path
         self.case_name = None
         if case_path is not None:
-            self.study_name = os.path.dirname(self.case_path)
-            if not os.path.exists(os.path.join(self.study_name, "cases.txt")):
-                self.study_name = "default"
+            self.case_path = os.path.abspath(self.case_path)
             self.case_name = os.path.basename(self.case_path)
+            self.study_path = os.path.dirname(self.case_path)
+            self.study_name = os.path.basename(self.study_path)
+            self.study_file = StudyFile(path=self.study_path)
+            # Check if the cases.txt has been generated. Meaning it is a study.
+            if not self.study_file.exists():
+                self.study_name = "default"
         else:
             self.study_name = os.path.basename(self.study_path)
         self.tmp_dir = "/tmp"
@@ -206,10 +215,37 @@ class StudyManager:
         remotedir = os.path.join(remote_workdir, self.case_name)
         if not self.remote.remote_dir_exists(remotedir):
             self.upload_case()
-        out = self.remote.command("cd %s && qsub exec.sh" % remotedir)
+        try:
+            self.remote.command("cd %s && qsub exec.sh" % remotedir)
+        except Exception as error:
+            if self.remote.command_status == 127:
+                raise Exception("Command 'qsub' not found in remote '%s'." % self.remote.name)
 
-    def submit_study(self, name):
-        pass
+    def submit_study(self):
+        remote_studydir = os.path.join(self.remote.remote_workdir, self.study_name)
+        if not self.remote.remote_dir_exists(remote_studydir):
+            self.upload_study()
+        self.study_file.read()
+        if self.study_file.is_empty():
+            raise Exception("File 'cases.txt' is empty. Cannot submit case.")
+        else:
+            for case in self.study_file.cases:
+                remote_casedir = os.path.join(remote_studydir, case[0])
+                try:
+                    self.remote.command("cd %s && qsub exec.sh" % remote_casedir, timeout=10)
+                except Exception as error:
+                    if self.remote.command_status == 127:
+                        raise Exception("Command 'qsub' not found in remote '%s'." % self.remote.name)
+                    else:
+                        raise Exception(error)
+
+
+    # def stat_study(self):
+    #     try:
+    #         self.remote.command("cd %s && qstat" % remote_casedir, timeout=10)
+    #     except Exception as error:
+    #      
+
 
     def decompress_study(self):
         pass
@@ -239,9 +275,3 @@ if __name__ == "__main__":
         raise e
     else:
         r.close()
-    # output, error = r.command("pwd")
-    # print output, error
-    # output, error = r.command("cd /work/er1414")
-    # print output, error
-    # output, error = r.command("pwd")
-    # print output, error

@@ -23,11 +23,11 @@ PARAMETERS:
       value: [2.2]
       mode: linear
     epsilon:
-      value: [1.0, 2.0, 2.3]
-      mode: linear
+      value: [1.0, 2.0]
+      mode: combinatoric 
     sigma:
       value: [1.0]
-      mode: linear
+      mode: linear 
     box-size:
       value: [5.0]
       mode: linear
