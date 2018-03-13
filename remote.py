@@ -6,6 +6,7 @@ from paramiko import SSHClient
 import getpass
 import tarfile
 from scp import SCPClient
+import socket
 
 
 #TODO: Refactor Remote to separate configuration-related stuff
@@ -89,13 +90,22 @@ class Remote:
         with open('%s.yaml', 'w') as remotefile:
             yaml.dump(remotedata, remotefile, default_flow_style=False)
 
+    def available(self, timeout=5):
+        try:
+            self.connect(passwd="", timeout=5)
+        except paramiko.AuthenticationException:
+            return True
+        except socket.timeout:
+            return False
+        else:
+            return False
 
-    def connect(self, passwd=None):
+    def connect(self, passwd=None, timeout=None):
         if self.key_login:
-            self.ssh.connect(self.addr, port=self.port)
+            self.ssh.connect(self.addr, port=self.port, timeout=timeout)
         else:
             self.ssh.connect(self.addr, port=self.port, username=self.username,\
-                             password=passwd)
+                             password=passwd, timeout=timeout)
         self.scp = SCPClient(self.ssh.get_transport())
 
     def command(self, cmd):

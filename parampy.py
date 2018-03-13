@@ -5,26 +5,29 @@ import shutil
 import re
 import sys
 import remote
+import getpass
 
 SRC_DIR = os.path.dirname(os.path.realpath(__file__))
 DEFAULTS_DIR = os.path.join(SRC_DIR, "defaults")
 
+class ConfigDirectory:
+    def __init__(self):
+        self.default_dir = os.path.join(os.getenv("HOME"), ".parampy")
+        self.default_remotes_dir = os.path.join(self.default_dir, "remotes")
+
 class StudySection:
     pass
-class ExecSection:
+class ParamsSection:
     pass
-class PostprocSection:
-    pass
-class BuildSection:
+class FilesSection:
     pass
 
 #TODO: Decouple allowed sections from Param file to make it general
 class ParamFile:
     def __init__(self, allowed_sections=None):
         self.ALLOWED_SECTIONS = {"STUDY": StudySection, 
-                                 "EXEC": ExecSection,
-                                 "POSTPROC": PostprocSection,
-                                 "BUILD": BuildSection}
+                                 "PARAMETERS": ParamsSection,
+                                 "FILES": FilesSection}
         self.params_fname = ""
         self.loaded = False
         self.params_data = {}
@@ -45,7 +48,6 @@ class ParamFile:
         except Exception as error:
             raise Exception("Parsing error: \n" + str(error))
         self._load_sections()
-        #print self.params_data
         self.params_fname = fname
         self.loaded = True
 
@@ -55,8 +57,7 @@ class ParamFile:
                 section_class =  self.ALLOWED_SECTIONS[section_name]
                 # self.sections[section_name] = section_class(section_name, section_opts)
             except Exception as error:
-                if section_name == "STUDY":
-                    print "Error: Section 'STUDY' is mandatory in 'params.yaml'."
+                print "Error: Section '%s' is mandatory in 'params.yaml'." % section_name
             
     def add_section(self, section, opts):
         self.config_data[section] = opts
@@ -81,27 +82,23 @@ class StudyBuilder:
         self.instance_counter = 0
         self.param_file = None
         self._load_config_file()
-        self.build_params = []
-        self.exec_params = []
-        self.build_params = self._build_param_list("BUILD")
+        # self.build_params = self._build_param_list("BUILD")
+        # self.params = self._build_param_list()
+        self.params = self.param_file["PARAMETERS"]
         self.linear_param_size = 0
-        self.exec_params = self._build_param_list("EXEC")
-        self.linear_params = self._get_params_by_mode(self.build_params + 
-                                                      self.exec_params, 
-                                                      "linear")
-        self.combinatoric_params = self._get_params_by_mode(self.build_params +
-                                                            self.exec_params,
-                                                            "combinatoric")
-        linear_multivalued_params = self._check_linear_params()
+        # self.exec_params = self._build_param_list("EXEC")
+        self.linear_param_list = self._get_params_by_mode("linear")
+        self.combinatoric_param_list = self._get_params_by_mode("combinatoric")
+        linear_multival_param_list = self._check_linear_params()
         self.nof_instances = self._compute_nof_instances()
-        self.multivalued_params = self.combinatoric_params + linear_multivalued_params
+        self.multival_param_list = linear_multival_param_list + self.combinatoric_param_list
         self.manifest_lines = []
 
     def _compute_nof_instances(self):
         nof_instances = 1
-        if self.linear_params:
-            nof_instances = len(self.linear_params[0]["value"])
-        for param in self.combinatoric_params:
+        if self.linear_param_list:
+            nof_instances = len(self.linear_param_list[0]["value"])
+        for param in self.combinatoric_param_list:
             nof_instances *= len(param["value"])
         return nof_instances
 
@@ -131,28 +128,34 @@ class StudyBuilder:
             raise Exception(error)
             
 
-    def _get_params_by_mode(self, params, mode):
-        return [p for p in params if p["mode"] == mode]
-
-    def _build_param_list(self, section):
+    def _get_params_by_mode(self,  mode):
         params_out = []
-        # Sections can be not present
-        try:
-            for f in self.param_file[section]["files"]:
-                params  = list(f["params"])
-                for p in params:
-                    p.update({"filename": f["name"]})
-                    p.update({"section": section.lower()})
-                params_out.extend(params)
-        except KeyError:
-            pass
+        for k, v in self.params.items():
+            if v["mode"] == mode:
+                param = v.copy()
+                param["name"] = k
+                params_out.append(param)
         return params_out
 
+    # def _build_param_list(self):
+    #     params_out = []
+    #     # Sections can be not present
+    #     try:
+    #         for p_name, p_values in self.param_file["PARAMETERS"].items():
+    #             new_p = {}
+    #             new_p.update(p_values)
+    #             new_p.update({"name": p_name})
+    #             params_out.append(new_p)
+    #     except KeyError:
+    #         pass
+    #     # print params_out
+    #     return params_out
+    #
             
     def _check_linear_params(self):
-        max_param_size = max([len(p["value"]) for p in self.linear_params])
+        max_param_size = max([len(p["value"]) for p in self.linear_param_list])
         multivalued_params = []
-        for p in self.linear_params:
+        for p in self.linear_param_list:
             if len(p["value"]) == 1:
                 p["value"] = p["value"] * max_param_size
             elif len(p["value"]) == max_param_size:
@@ -160,7 +163,6 @@ class StudyBuilder:
             elif len(p["value"]) != max_param_size:
                 raise Exception("Error: All linear params lists must be same size or one.")
         self.linear_param_size = max_param_size
-        print multivalued_params
         return multivalued_params
 
 
@@ -170,7 +172,7 @@ class StudyBuilder:
                 param = params[0].copy()
                 param.pop("mode")
                 param["value"] = val
-                self._gen_comb_instance(instance + [param], params[1:])
+                self._gen_comb_instance(instance.update(param), params[1:])
         else:
             self.instance_counter += 1
             self._create_instance(instance)
@@ -189,60 +191,71 @@ class StudyBuilder:
 
     def _replace_placeholders(self, dirname, instance):
         # Find files to modify. Append name of the section as the parent folder.
-        files = reduce(lambda r, d: r.update({os.path.join(dirname, d["section"], d["filename"]):{}}) or r, instance, {})
-        # Add param:value pairs
-        for param in instance:
-            fname = os.path.join(dirname, param["section"], param["filename"])
-            files[fname].update({param["name"]: param["value"]})
+        # files = reduce(lambda r, d: r.update({os.path.join(dirname, d["section"], d["filename"]):{}}) or r, instance, {})
+        # for param in instance:
+        #     fname = os.path.join(dirname, param["section"], param["filename"])
+        #     files[fname].update({param["name"]: param["value"]})
+        file_paths =  []
+        build_string = self._build_instance_string(instance)
+        for path in self.param_file["FILES"]:
+            for f in path["files"]:
+                p = os.path.join(os.path.abspath(build_string), path["path"])
+                p = os.path.join(p, f)
+                file_paths.append(p)
 
-        for fname, params in files.items():
+        # print file_paths
+        # Parampy params useful to build paths.
+        parampy_params = {"PARAMPY-CASENAME": self._build_instance_string(instance),
+                          "PARAMPY-STUDYNAME": self.param_file["STUDY"]["name"]}
+        for path in file_paths:
             try:
                 lines = []
-                with open(fname, 'r') as placeholder_file:
+                with open(path, 'r') as placeholder_file:
                     lines = placeholder_file.readlines()                                                                                                                                                                                                 
-                    for ln, line in enumerate(lines):
-                        line_opts = set(re.findall(r'\$\[([a-zA-Z0-9\-]+?)\]', line))
-                        for opt in line_opts:
+                for ln, line in enumerate(lines):
+                    line_opts = set(re.findall(r'\$\[([a-zA-Z0-9\-]+?)\]', line))
+                    # print path, line_opts
+                    for opt in line_opts:
+                        try:
+                            lines[ln] = lines[ln].replace("$[" + opt + "]", str(instance[opt]))
+                        except KeyError as error:
                             try:
-                               lines[ln] = lines[ln].replace("$[" + opt + "]", str(params[opt]))
+                                lines[ln] = lines[ln].replace("$[" + opt + "]", str(parampy_params[opt]))
                             except KeyError as error:
                                 # All placeholders has to be replaced and must be in params.
                                 raise Exception("Parameter '%s' not present." % opt)
-                with open(fname, 'w+') as replaced_file:
+                with open(path, 'w+') as replaced_file:
                     replaced_file.writelines(lines)
 
              
             except Exception as error:
-                print error
+                raise error
+                # print error
             #print "".join(lines)
 
     #TODO: Decouple state and behaviour of instances into a new class
     def generate_instances(self):
-        instance = []
+        instance = {}
         self.instance_counter = 0
         for _ in xrange(self.linear_param_size):
-            for lp in self.linear_params:
-                param = lp.copy()
-                param.pop("mode")
-                param["value"] = param["value"][_]
-                instance.append(param)
-
-            self._gen_comb_instance(instance, self.combinatoric_params)
-            instance = []
+            for lp in self.linear_param_list:
+                param = {lp["name"]: lp["value"][_]}
+                instance.update(param)
+            self._gen_comb_instance(instance, self.combinatoric_param_list)
+            instance = {}
 
         with open("cases.txt", 'w') as manifest_file:
             manifest_file.writelines(self.manifest_lines)
             
     def _build_instance_string(self, instance):
+        print instance
         nof_figures = len(str(self.nof_instances))
         instance_string = "%0*d" % (nof_figures, self.instance_counter)
-        multivalued_keys = [(d["section"], d["name"], d["filename"]) for d in self.multivalued_params] 
+        multivalued_keys = [d["name"] for d in self.multival_param_list] 
         if not self.short_name:
-            for param in instance:
-                print param.keys()
-                print multivalued_keys
-                if (param["section"], param["name"], param["filename"]) in multivalued_keys:
-                    instance_string += "_%s%s" % (param["name"], param["value"])
+            for pname, pval in instance.items():
+                if pname in multivalued_keys:
+                    instance_string += "_%s%s" % (pname, pval)
         return instance_string
 
     @classmethod 
@@ -262,10 +275,31 @@ class StudyBuilder:
         else:
             raise Exception("Directory '%s' already exists!" % study_path)
 
+def opts_get_remote(abs_remote_path, args):
+    r = remote.Remote()
+    if args.remote:
+        remote_yaml_path = os.path.join(config_dir.default_remotes_dir, args.remote + ".yaml")
+        try:
+            r.load(remote_yaml_path)
+        except Exception as error:
+            sys.exit("Error: Remote '%s' not found." % args.remote)
+            
+    else:
+        remote_yaml_path = os.path.join(abs_remote_path, "remote.yaml")
+        try:
+            r.load(remote_yaml_path)
+        except Exception as error:
+            try:
+                r.load(remote_yaml_path)
+                # TODO: default remote here instead of repeating this
+            except Exception:
+                sys.exit("Error: File 'remote.yaml' not found and default remote not defined.")
+    return r
+
 
 if __name__ == "__main__":
     import argparse
-
+    config_dir = ConfigDirectory()
     parser = argparse.ArgumentParser(description="Program to generate parameter studies.")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("-v", "--verbose", action="store_true")
@@ -287,6 +321,7 @@ if __name__ == "__main__":
     actions_group.add_argument("-S", "--submit-study", metavar="study_name", help="Submit case to execution.")
 
     parser.add_argument("--shortname", action="store_true", default=False, help="Study instances are short named.")
+    parser.add_argument("--remote", metavar="remote_name", help="Study instances are short named.")
     args = parser.parse_args()
 
     if args.quiet:
@@ -304,10 +339,12 @@ if __name__ == "__main__":
             sys.exit("Error:\nParameter file 'params.yaml' do not exists!")
         if not StudyBuilder.templatedir_exists("."):
             sys.exit("Error:\nTemplate directory do not exists!")
-        try:
-            study =  StudyBuilder(".", short_name=args.shortname)
-        except Exception as error:
-            sys.exit(error)
+
+        study =  StudyBuilder(".", short_name=args.shortname)
+        # try:
+        #     study =  StudyBuilder(".", short_name=args.shortname)
+        # except Exception as error:
+        #     sys.exit(error)
         study.generate_instances()
     elif args.clean:
         if not ParamFile.paramfile_exists("."):
@@ -324,17 +361,45 @@ if __name__ == "__main__":
             remote.create_remote_template(".")
         except Exception as error:
             sys.exit(error)
+
     elif args.upload_case:
+        r = remote.Remote()
+        abs_remote_path = os.path.abspath(args.upload_case)
+        r = opts_get_remote(abs_remote_path, args)
+        if r.available():
+            passwd = getpass.getpass("Password: ")
+        else:
+            sys.exit("Error: Remote '%s' not available." % r.name)
         try:
-            # remote = remote.
-            # r.load("./remote.yaml")
-            # passwd = getpass.getpass("Password: ")
-            # r.connect(passwd)
-            # sm = remote.StudyMonitor(remote
+            r.connect(passwd)
         except Exception as error:
             sys.exit(error)
+        sm = remote.StudyManager(r, case_path=abs_remote_path)
+        try:
+            sm.upload_case()
+        except Exception as error:
+            r.close()
+            sys.exit(error)
+        r.close()
+
+    elif args.upload_study:
+        abs_remote_path = os.path.abspath(args.upload_study)
+        r = opts_get_remote(abs_remote_path, args)
+        if r.available():
+            passwd = getpass.getpass("Password: ")
+        else:
+            sys.exit("Error: Remote '%s' not available." % r.name)
+        try:
+            r.connect(passwd)
+        except Exception as error:
+            sys.exit(error)
+        sm = remote.StudyManager(r, study_path=abs_remote_path)
+        try:
+            sm.upload_study()
+        except Exception as error:
+            r.close()
+            sys.exit(error)
+        r.close()
+
+
         
-    else:
-        pass
-    #study =  StudyBuilder("study_test")
-    #study.generate_instances()
