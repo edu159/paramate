@@ -1,0 +1,9 @@
+# Template for a remote
+remote:
+    name: cx1 
+    address: login.cx1.hpc.ic.ac.uk
+    port: 22
+    remote-workdir: /home/er1414/parampy-test
+    shell: bash
+    username: er1414
+    resource-manager: pbs

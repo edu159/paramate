@@ -1,0 +1,42 @@
+STUDY:
+  name: viscositygk_atomistic
+  description: "LJ fluid equilibrium properties"
+  version: 1.0
+
+PARAMETERS:
+    density:
+      value: [0.81]
+      mode: linear
+    temperature:
+      value: [1.1]
+      mode: linear
+    no-samples:
+      value: [60000]
+      mode: linear
+    correlation-length:
+      value: [800, 123, 1233]
+      mode: linear
+    seed:
+      value: [13411, 213,2332]
+      mode: linear
+    cutoff: 
+      value: [2.2]
+      mode: linear
+    epsilon:
+      value: [1.0, 2.0, 2.3]
+      mode: linear
+    sigma:
+      value: [1.0]
+      mode: linear
+    box-size:
+      value: [5.0]
+      mode: linear
+
+FILES:
+    - path: exec
+      files:
+        - in.lammps
+    - path: .
+      files:
+        - exec.sh
+        - build.sh

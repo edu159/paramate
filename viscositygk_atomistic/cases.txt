@@ -1,0 +1,3 @@
+1_seed13411_epsilon1.0_correlation-length800 : [CREATED]
+2_seed213_epsilon2.0_correlation-length123 : [CREATED]
+3_seed2332_epsilon2.3_correlation-length1233 : [CREATED]
