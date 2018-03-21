@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 import yaml
 import os
 import glob
@@ -115,7 +115,7 @@ class StudyFile:
 
 
 class StudyBuilder:
-    DEFAULT_DIRECTORIES = ["template/build", "template/exec", "template/output", "template/postproc"]
+    DEFAULT_DIRECTORIES = ["template/build", "template/input", "template/output", "template/postproc"]
     DEFAULT_FILES = ["template/exec.sh", "template/build.sh", "README", "params.yaml", 
                      "generators.py"] 
     def __init__(self, study_case_path, only_one=False, short_name=False):
@@ -229,18 +229,15 @@ class StudyBuilder:
 
     #TODO: Create a file with instance information
     def _create_instance(self, instance):
-        dirname = self._build_instance_string(instance, self.short_name)
-        shutil.copytree("template", dirname)
+        casedir = os.path.abspath(self._build_instance_string(instance, self.short_name))
+        studydir = os.path.dirname(casedir)
+        print casedir, studydir
+        shutil.copytree(os.path.join(studydir, "template"), casedir)
         self._create_instance_infofile(instance)
-        self._replace_placeholders(dirname, instance)
+        self._replace_placeholders(casedir, instance)
 
 
     def _replace_placeholders(self, dirname, instance):
-        # Find files to modify. Append name of the section as the parent folder.
-        # files = reduce(lambda r, d: r.update({os.path.join(dirname, d["section"], d["filename"]):{}}) or r, instance, {})
-        # for param in instance:
-        #     fname = os.path.join(dirname, param["section"], param["filename"])
-        #     files[fname].update({param["name"]: param["value"]})
         file_paths =  []
         build_string = self._build_instance_string(instance, self.short_name)
         for path in self.param_file["FILES"]:
@@ -249,7 +246,6 @@ class StudyBuilder:
                 p = os.path.join(p, f)
                 file_paths.append(p)
 
-        # print file_paths
         # Parampy params useful to build paths.
         parampy_params = {"PARAMPY-CASENAME": self._build_instance_string(instance, self.short_name),
                           "PARAMPY-STUDYNAME": self.param_file["STUDY"]["name"]}
@@ -339,6 +335,7 @@ def opts_get_remote(abs_remote_path, args):
             
     else:
         remote_yaml_path = os.path.join(abs_remote_path, "remote.yaml")
+        print remote_yaml_path
         try:
             r.load(remote_yaml_path)
         except Exception as error:
@@ -386,7 +383,7 @@ if __name__ == "__main__":
     elif args.create:
         study_name = args.create
         try:
-            StudyBuilder.create_dir_structure("/home/eduardo/Desktop/repositories/parampy", study_name)
+            StudyBuilder.create_dir_structure(os.path.dirname(os.path.abspath(study_name)), study_name)
         except Exception as error:
             sys.exit(error)
 
@@ -479,7 +476,7 @@ if __name__ == "__main__":
 
     elif args.submit_study:
         abs_remote_path = os.path.abspath(args.submit_study)
-        r = opts_get_remote(os.path.dirname(abs_remote_path), args)
+        r = opts_get_remote(abs_remote_path, args)
         if r.available():
             passwd = getpass.getpass("Password: ")
         else:

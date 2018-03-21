@@ -2,6 +2,7 @@ import paramiko
 import yaml
 import shutil
 import os
+import time
 from paramiko import SSHClient
 import getpass
 import tarfile
@@ -182,7 +183,7 @@ class StudyManager:
         self.remote.upload(upload_src, upload_dest)
         extract_src = os.path.join(upload_dest, tar_name)
         extract_dest = upload_dest
-        out = self.remote.command("tar -xzf %s --directory %s" % (extract_src, extract_dest))
+        out = self.remote.command("tar -xzf %s --directory %s --warning=no-timestamp" % (extract_src, extract_dest))
         os.remove(upload_src)
         if not keep_targz:
             out = self.remote.command("rm -f %s" % extract_src)
@@ -216,6 +217,7 @@ class StudyManager:
         if not self.remote.remote_dir_exists(remotedir):
             self.upload_case()
         try:
+            time.sleep(1)
             self.remote.command("cd %s && qsub exec.sh" % remotedir)
         except Exception as error:
             if self.remote.command_status == 127:
@@ -229,9 +231,11 @@ class StudyManager:
         if self.study_file.is_empty():
             raise Exception("File 'cases.txt' is empty. Cannot submit case.")
         else:
+            time.sleep(1)
             for case in self.study_file.cases:
                 remote_casedir = os.path.join(remote_studydir, case[0])
                 try:
+                    time.sleep(0.1)
                     self.remote.command("cd %s && qsub exec.sh" % remote_casedir, timeout=10)
                 except Exception as error:
                     if self.remote.command_status == 127:
