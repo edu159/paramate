@@ -4,3 +4,7 @@ Upload case:
 Upload study:
 1) Look for remote in CONFIGDIR if --remote present.
 2) Look for remote in case_dir (The study is inside a case)
+Download study:
+1) Download everything stated in params.yaml if DOWNLOAD section provided
+2) If the data is not available to download it will show errors
+3) --force option can be added to force download what is available and ignore the rest

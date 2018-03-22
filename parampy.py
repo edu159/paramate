@@ -22,12 +22,15 @@ class ParamsSection:
     pass
 class FilesSection:
     pass
+class DownloadSection:
+    pass
 
 #TODO: Decouple allowed sections from Param file to make it general
 class ParamFile:
     def __init__(self, allowed_sections=None):
         self.ALLOWED_SECTIONS = {"STUDY": StudySection, 
                                  "PARAMETERS": ParamsSection,
+                                 "DOWNLOAD": DownloadSection,
                                  "FILES": FilesSection}
         self.params_fname = ""
         self.loaded = False
@@ -40,7 +43,8 @@ class ParamFile:
         return os.path.exists(p)
         
 
-    def load(self, fname="params.yaml"):
+    def load(self, path="."):
+        fname = os.path.join(path, "params.yaml")
         try:
             with open(fname, 'r') as paramfile:
                 self.params_data = yaml.load(paramfile)
@@ -118,10 +122,9 @@ class StudyBuilder:
     DEFAULT_DIRECTORIES = ["template/build", "template/input", "template/output", "template/postproc"]
     DEFAULT_FILES = ["template/exec.sh", "template/build.sh", "README", "params.yaml", 
                      "generators.py"] 
-    def __init__(self, study_case_path, only_one=False, short_name=False):
+    def __init__(self, study_path, only_one=False, short_name=False):
         #TODO: Check if the study case directory is empty and in good condition
-        self.study_case_path = study_case_path
-        os.chdir(study_case_path)
+        self.study_path = os.path.abspath(study_path)
         self.only_one = only_one
         self.short_name = short_name
         self.instance_counter = 0
@@ -136,7 +139,7 @@ class StudyBuilder:
         self.multival_param_list = linear_multival_param_list + self.combinatoric_param_list
         self.multival_keys = [d["name"] for d in self.multival_param_list] 
         self.manifest_lines = []
-        self.study_file = StudyFile()
+        self.study_file = StudyFile(path=self.study_path)
 
     def _compute_nof_instances(self):
         nof_instances = 1
@@ -152,22 +155,28 @@ class StudyBuilder:
         return os.path.exists(p)
 
     @staticmethod
-    def clean_study():
-        try:
-            for f in glob.glob("./[0-9]*"):
-                shutil.rmtree(f)
-        except Exception as error:
-            raise Exception("Error:\n" + str(error))
+    def clean_study(path):
+        study_file = StudyFile(path=path)
+        if study_file.exists(path):
+            study_file.read()
+            if not study_file.is_empty():
+                    for f in study_file.cases:
+                        try:
+                            shutil.rmtree(os.path.join(path, f[0]))
+                        except Exception as error:
+                            pass
+                    os.remove(os.path.join(path, "cases.txt"))
 
 
     def _create_instance_infofile(self, instance):
         f = os.path.join(self._build_instance_string(instance, self.short_name), "instance.info")
+        f = os.path.join(self.study_path, f)
         open(f, 'a').close()
 
     def _load_config_file(self):
         try:
             self.param_file = ParamFile()
-            self.param_file.load()
+            self.param_file.load(self.study_path)
         except Exception as error:
             raise Exception(error)
             
@@ -229,9 +238,8 @@ class StudyBuilder:
 
     #TODO: Create a file with instance information
     def _create_instance(self, instance):
-        casedir = os.path.abspath(self._build_instance_string(instance, self.short_name))
+        casedir = os.path.join(self.study_path, self._build_instance_string(instance, self.short_name))
         studydir = os.path.dirname(casedir)
-        print casedir, studydir
         shutil.copytree(os.path.join(studydir, "template"), casedir)
         self._create_instance_infofile(instance)
         self._replace_placeholders(casedir, instance)
@@ -242,7 +250,7 @@ class StudyBuilder:
         build_string = self._build_instance_string(instance, self.short_name)
         for path in self.param_file["FILES"]:
             for f in path["files"]:
-                p = os.path.join(os.path.abspath(build_string), path["path"])
+                p = os.path.join(os.path.join(self.study_path, build_string), path["path"])
                 p = os.path.join(p, f)
                 file_paths.append(p)
 
@@ -356,44 +364,50 @@ if __name__ == "__main__":
     group.add_argument("-q", "--quiet", action="store_true")
     actions_group = parser.add_mutually_exclusive_group()
     actions_group.add_argument("-c", "--create", metavar="study_name", help="Create an empty study template.")
-    actions_group.add_argument("-g", "--generate", action="store_true", help="Generate the instances of the study based on the 'params.yaml' file.")
+    actions_group.add_argument("-g", "--generate", nargs="?", metavar="study_name", const=".", help="Generate the instances of the study based on the 'params.yaml' file.")
     actions_group.add_argument("--check", action="store_true", 
 			help="Check if the study is consistent with 'params.yaml' file.")
-    actions_group.add_argument("--clean", action="store_true", help="Clean the instances of the study.")
+    actions_group.add_argument("-r", "--clean", nargs="?", metavar="study_name", const=".", help="Clean the instances of the study.")
     actions_group.add_argument("-i", "--info", action="store_true", help="Get a resumed info of the study.")
     actions_group.add_argument("--createremote", action="store_true", help="Create a remote template.")
     actions_group.add_argument("--addremote", action="store_true", help="Add a remote.")
     actions_group.add_argument("--delremote", action="store_true", help="Delete a remote.")
     actions_group.add_argument("--listremote", action="store_true", help="List all saved remotes.")
     actions_group.add_argument("-u", "--upload-case", metavar="case_name", help="Upload case to remote.")
-    actions_group.add_argument("-U", "--upload-study", metavar="study_name", help="Upload study to remote.")
+    actions_group.add_argument("-U", "--upload-study", nargs="?", const=".", metavar="study_name", help="Upload study to remote.")
     actions_group.add_argument("-s", "--submit-case", metavar="case_name", help="Submit case to execution.")
-    actions_group.add_argument("-S", "--submit-study", metavar="study_name", help="Submit case to execution.")
-
+    actions_group.add_argument("-S", "--submit-study", nargs="?", const=".", metavar="study_name", help="Submit case to execution.")
+    actions_group.add_argument("-d", "--download-case", metavar="case_name", help="Download case from remote.")
+    actions_group.add_argument("-D", "--download-study", nargs="?", const=".", metavar="study_name", help="Download study from remote.")
+    actions_group.add_argument("-l", "--status", nargs="?", const=".", metavar="study_name", help="Download study from remote.")
     parser.add_argument("--shortname", action="store_true", default=False, help="Study instances are short named.")
-    parser.add_argument("--remote", metavar="remote_name", help="Study instances are short named.")
+    parser.add_argument("--remote", metavar="remote_name", help="Specify remote for an action.")
+    parser.add_argument("--force", action="store_true", default=False, help="Specify remote for an action.")
+    parser.add_argument("--paramfile", metavar="file_name", help="Specify path to paramfile.")
     args = parser.parse_args()
 
     if args.quiet:
-		print "quiet"
+        print "quiet"
 
     elif args.verbose:
         print "verbose"
 
     elif args.create:
         study_name = args.create
+        study_path = os.path.dirname(os.path.abspath(study_name))
         try:
-            StudyBuilder.create_dir_structure(os.path.dirname(os.path.abspath(study_name)), study_name)
+            StudyBuilder.create_dir_structure(study_path, study_name)
         except Exception as error:
             sys.exit(error)
 
     elif args.generate:
-        if not ParamFile.paramfile_exists("."):
+        study_name = args.generate
+        study_path = os.path.abspath(study_name)
+        if not ParamFile.paramfile_exists(study_path):
             sys.exit("Error:\nParameter file 'params.yaml' do not exists!")
-        if not StudyBuilder.templatedir_exists("."):
+        if not StudyBuilder.templatedir_exists(study_path):
             sys.exit("Error:\nTemplate directory do not exists!")
-
-        study =  StudyBuilder(".", short_name=args.shortname)
+        study =  StudyBuilder(study_path, short_name=args.shortname)
         # try:
         #     study =  StudyBuilder(".", short_name=args.shortname)
         # except Exception as error:
@@ -401,14 +415,13 @@ if __name__ == "__main__":
         study.generate_instances()
 
     elif args.clean:
-        if not ParamFile.paramfile_exists("."):
-            sys.exit("Error:\nParameter file 'params.yaml' do not exists!")
-        if not StudyBuilder.templatedir_exists("."):
-            sys.exit("Error:\nTemplate directory do not exists!")
-        try:
-            StudyBuilder.clean_study()
-        except Exception as error:
-            sys.exit(error)
+        study_name = args.clean
+        study_path = os.path.abspath(study_name)
+        StudyBuilder.clean_study(study_path)
+        # try:
+        #     StudyBuilder.clean_study(study_path)
+        # except Exception as error:
+        #     sys.exit(error)
 
     elif args.createremote:
         remote = remote.Remote()
@@ -430,7 +443,7 @@ if __name__ == "__main__":
             sys.exit(error)
         sm = remote.StudyManager(r, case_path=abs_remote_path)
         try:
-            sm.upload_case()
+            sm.upload_case(force=args.force)
         except Exception as error:
             r.close()
             sys.exit(error)
@@ -449,7 +462,7 @@ if __name__ == "__main__":
             sys.exit(error)
         sm = remote.StudyManager(r, study_path=abs_remote_path)
         try:
-            sm.upload_study()
+            sm.upload_study(force=args.force)
         except Exception as error:
             r.close()
             sys.exit(error)
@@ -492,6 +505,50 @@ if __name__ == "__main__":
             r.close()
             sys.exit(error)
         r.close()
+
+    elif args.download_study:
+        abs_remote_path = os.path.abspath(args.download_study)
+        r = opts_get_remote(abs_remote_path, args)
+        if r.available():
+            passwd = getpass.getpass("Password: ")
+        else:
+            sys.exit("Error: Remote '%s' not available." % r.name)
+        try:
+            r.connect(passwd)
+        except Exception as error:
+            sys.exit(error)
+        sm = remote.StudyManager(r, study_path=abs_remote_path)
+        sm.download_study(force=args.force)
+        # try:
+        #     sm.download_study()
+        # except Exception as error:
+        #     r.close()
+        #     sys.exit(error)
+        r.close()
+
+    elif args.status:
+        abs_remote_path = os.path.abspath(args.status)
+        r = opts_get_remote(abs_remote_path, args)
+        if r.available():
+            passwd = getpass.getpass("Password: ")
+        else:
+            sys.exit("Error: Remote '%s' not available." % r.name)
+        try:
+            r.connect(passwd)
+        except Exception as error:
+            sys.exit(error)
+        sm = remote.StudyManager(r, study_path=abs_remote_path)
+        sm.status()
+        # try:
+        #     sm.status()
+        # except Exception as error:
+        #     r.close()
+        #     sys.exit(error)
+        r.close()
+
+
+
+
 
 
 

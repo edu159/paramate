@@ -1,6 +1,0 @@
-1:epsilon-1.0_seed-13411_correlation-length-800:CREATED
-2:epsilon-2.0_seed-13411_correlation-length-800:CREATED
-3:epsilon-1.0_seed-213_correlation-length-123:CREATED
-4:epsilon-2.0_seed-213_correlation-length-123:CREATED
-5:epsilon-1.0_seed-2332_correlation-length-1233:CREATED
-6:epsilon-2.0_seed-2332_correlation-length-1233:CREATED
