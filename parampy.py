@@ -7,6 +7,7 @@ import re
 import sys
 import remote
 import getpass
+import subprocess
 
 SRC_DIR = os.path.dirname(os.path.realpath(__file__))
 DEFAULTS_DIR = os.path.join(SRC_DIR, "defaults")
@@ -102,7 +103,6 @@ class StudyFile:
                 ls = l.split(':')
                 #TODO: Change style in parameter string. Now the same as in file name.
                 self.cases.append(("%s_%s" % (ls[0], ls[1]), ls[2].rstrip()))
-        print self.cases
             
     def write(self):
         lines_str = []
@@ -122,11 +122,12 @@ class StudyBuilder:
     DEFAULT_DIRECTORIES = ["template/build", "template/input", "template/output", "template/postproc"]
     DEFAULT_FILES = ["template/exec.sh", "template/build.sh", "README", "params.yaml", 
                      "generators.py"] 
-    def __init__(self, study_path, only_one=False, short_name=False):
+    def __init__(self, study_path, only_one=False, short_name=False, build_once=False):
         #TODO: Check if the study case directory is empty and in good condition
         self.study_path = os.path.abspath(study_path)
         self.only_one = only_one
         self.short_name = short_name
+        self.build_once = build_once
         self.instance_counter = 0
         self.param_file = None
         self._load_config_file()
@@ -140,6 +141,24 @@ class StudyBuilder:
         self.multival_keys = [d["name"] for d in self.multival_param_list] 
         self.manifest_lines = []
         self.study_file = StudyFile(path=self.study_path)
+        self.template_path = os.path.join(self.study_path, "template")
+        self.build_script_path = os.path.join(self.template_path, "build.sh")
+
+    def execute_build_script(self, build_script_path):
+        output = ""
+        cwd = os.getcwd()
+        try:
+            os.chdir(os.path.dirname(build_script_path))
+            output = subprocess.check_output([build_script_path], stderr=subprocess.STDOUT)
+        except subprocess.CalledProcessError as error:
+            output = error.output
+            raise Exception("Error while running 'build.sh' script.")
+        finally:
+            os.chdir(cwd)
+            with open("build.log", "w") as log:
+                log.writelines(output)
+
+ 
 
     def _compute_nof_instances(self):
         nof_instances = 1
@@ -230,7 +249,9 @@ class StudyBuilder:
         else:
             self.instance_counter += 1
             self._create_instance(instance)
-            self.study_file.add_instance(self.nof_instances, self.instance_counter, self._build_instance_string(instance, short_name=False, only_params=True, style="file_name"))
+            self.study_file.add_instance(self.nof_instances, self.instance_counter,
+                                         self._build_instance_string(instance, short_name=False,
+                                         only_params=True, style="file_name"))
             # self._add2manifest(instance)
 
     def _add2manifest(self, instance):
@@ -240,9 +261,16 @@ class StudyBuilder:
     def _create_instance(self, instance):
         casedir = os.path.join(self.study_path, self._build_instance_string(instance, self.short_name))
         studydir = os.path.dirname(casedir)
-        shutil.copytree(os.path.join(studydir, "template"), casedir)
-        self._create_instance_infofile(instance)
-        self._replace_placeholders(casedir, instance)
+        shutil.copytree(self.template_path, casedir)
+        try:
+            self._create_instance_infofile(instance)
+            self._replace_placeholders(casedir, instance)
+            if not self.build_once:
+                self.execute_build_script(os.path.join(casedir, "build.sh"))
+        except Exception as error:
+            shutil.rmtree(casedir)
+            raise error
+
 
 
     def _replace_placeholders(self, dirname, instance):
@@ -287,6 +315,14 @@ class StudyBuilder:
     def generate_instances(self):
         instance = {}
         self.instance_counter = 0
+        # Check if build.sh has to be run before generating the instances
+        if os.path.exists(self.build_script_path):
+            if self.build_once:
+                self.execute_build_script(self.build_script_path)
+        else:
+            if self.build_once:
+                raise Exception("No 'build.sh' script found but '--build-once' option was specified.")
+
         for _ in xrange(self.linear_param_size):
             for lp in self.linear_param_list:
                 param = {lp["name"]: lp["value"][_]}
@@ -384,6 +420,7 @@ if __name__ == "__main__":
     parser.add_argument("--remote", metavar="remote_name", help="Specify remote for an action.")
     parser.add_argument("--force", action="store_true", default=False, help="Specify remote for an action.")
     parser.add_argument("--paramfile", metavar="file_name", help="Specify path to paramfile.")
+    parser.add_argument("--build-once", action="store_true", default=False, help="Study instances are short named.")
     args = parser.parse_args()
 
     if args.quiet:
@@ -407,7 +444,7 @@ if __name__ == "__main__":
             sys.exit("Error:\nParameter file 'params.yaml' do not exists!")
         if not StudyBuilder.templatedir_exists(study_path):
             sys.exit("Error:\nTemplate directory do not exists!")
-        study =  StudyBuilder(study_path, short_name=args.shortname)
+        study =  StudyBuilder(study_path, short_name=args.shortname, build_once=args.build_once)
         # try:
         #     study =  StudyBuilder(".", short_name=args.shortname)
         # except Exception as error:
