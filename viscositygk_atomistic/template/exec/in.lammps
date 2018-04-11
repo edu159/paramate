@@ -13,9 +13,6 @@ variable    epsilon equal $[epsilon]
 variable    sigma equal $[sigma]
 variable    box_size equal $[box-size]
 
-$[PARAMPY-CASENAME]
-$[PARAMPY-STUDYNAME]
-
 
 variable	x equal ${box_size}
 variable	y equal ${box_size}

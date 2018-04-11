@@ -1,5 +1,6 @@
 #!/usr/bin/env python2
 import yaml
+import stat
 import os
 import glob
 import shutil
@@ -37,15 +38,16 @@ class ParamFile:
         self.loaded = False
         self.params_data = {}
         self.sections ={}
+        self.path = ""
 
     @staticmethod
     def paramfile_exists(path):
         p = os.path.join(path, "params.yaml")
         return os.path.exists(p)
         
-
     def load(self, path="."):
         fname = os.path.join(path, "params.yaml")
+        self.path = path
         try:
             with open(fname, 'r') as paramfile:
                 self.params_data = yaml.load(paramfile)
@@ -57,13 +59,36 @@ class ParamFile:
         self.params_fname = fname
         self.loaded = True
 
+
     def _load_sections(self):
         for section_name, section_opts in  self.params_data.items():
             try:
                 section_class =  self.ALLOWED_SECTIONS[section_name]
                 # self.sections[section_name] = section_class(section_name, section_opts)
             except Exception as error:
-                print "Error: Section '%s' is mandatory in 'params.yaml'." % section_name
+                raise
+                # raise Exception("Error: Section '%s' is mandatory in 'params.yaml'." % section_name)
+
+            #TODO: Rework this and check for correct format of params.yaml. Add this into ParamSection
+            if section_name == "PARAMETERS":
+                try:
+                    sys.path.insert(0, self.path)
+                    import generators
+                except Exception as err:
+                    pass
+                for param_name, param_fields in section_opts.items():
+                    if str(param_fields["value"]).startswith("gen:"):
+                        gen_name = param_fields["value"].split(":")[1]
+                        try:
+                            param_fields["value"] = getattr(generators, gen_name)()
+                        except AttributeError as error:
+                            raise Exception("Generator '%s' not found in 'generators.py'.")
+                        except Exception as error:
+                            raise Exception("Error in 'genenerators.py - '" + str(error))
+                        if type(param_fields["value"]) is not list:
+                            raise Exception("Generators must return a list of values. Got '%s'."\
+                                            % type(param_fields["value"]))
+
             
     def add_section(self, section, opts):
         self.config_data[section] = opts
@@ -117,12 +142,31 @@ class StudyFile:
     def exists(path, fname="cases.txt"):
         return os.path.exists(os.path.join(path, fname))
 
+class MessagePrinter(object):
+    def __init__(self, quiet, verbose):
+        self.quiet = quiet
+        self.verbose = verbose
 
-class StudyBuilder:
+    def print_msg(self, message, ignore_quiet=False, verbose=False, end="\n"):
+        if not self.quiet:
+            if verbose:
+                if self.verbose:
+                    sys.stdout.write(message+end)
+            else:
+                sys.stdout.write(message+end)
+        else:
+            if ignore_quiet:
+                    sys.stdout.write(message+end)
+
+
+
+class StudyBuilder(MessagePrinter):
     DEFAULT_DIRECTORIES = ["template/build", "template/input", "template/output", "template/postproc"]
     DEFAULT_FILES = ["template/exec.sh", "template/build.sh", "README", "params.yaml", 
                      "generators.py"] 
-    def __init__(self, study_path, only_one=False, short_name=False, build_once=False):
+    def __init__(self, study_path, only_one=False, short_name=False, build_once=False,
+                 quiet=False, verbose=False):
+        super(StudyBuilder, self).__init__(quiet, verbose)
         #TODO: Check if the study case directory is empty and in good condition
         self.study_path = os.path.abspath(study_path)
         self.only_one = only_one
@@ -179,12 +223,17 @@ class StudyBuilder:
         if study_file.exists(path):
             study_file.read()
             if not study_file.is_empty():
+                    print "Deleting %d cases..." % len(study_file.cases)
                     for f in study_file.cases:
                         try:
                             shutil.rmtree(os.path.join(path, f[0]))
                         except Exception as error:
                             pass
+                    print "Deleting file 'cases.txt'..."
                     os.remove(os.path.join(path, "cases.txt"))
+            print "Done."
+        else:
+            print "Nothing to delete, file 'cases.txt' not found."
 
 
     def _create_instance_infofile(self, instance):
@@ -209,21 +258,7 @@ class StudyBuilder:
                 params_out.append(param)
         return params_out
 
-    # def _build_param_list(self):
-    #     params_out = []
-    #     # Sections can be not present
-    #     try:
-    #         for p_name, p_values in self.param_file["PARAMETERS"].items():
-    #             new_p = {}
-    #             new_p.update(p_values)
-    #             new_p.update({"name": p_name})
-    #             params_out.append(new_p)
-    #     except KeyError:
-    #         pass
-    #     # print params_out
-    #     return params_out
-    #
-            
+           
     def _check_linear_params(self):
         max_param_size = max([len(p["value"]) for p in self.linear_param_list])
         multivalued_params = []
@@ -252,13 +287,11 @@ class StudyBuilder:
             self.study_file.add_instance(self.nof_instances, self.instance_counter,
                                          self._build_instance_string(instance, short_name=False,
                                          only_params=True, style="file_name"))
-            # self._add2manifest(instance)
 
-    def _add2manifest(self, instance):
-        self.manifest_lines.append("%s : [CREATED]\n" % self._build_instance_string(instance, self.short_name))
-
+    
     #TODO: Create a file with instance information
     def _create_instance(self, instance):
+        self.print_msg("Creating instance '%s'..." % self._build_instance_string(instance, self.short_name), verbose=True)
         casedir = os.path.join(self.study_path, self._build_instance_string(instance, self.short_name))
         studydir = os.path.dirname(casedir)
         shutil.copytree(self.template_path, casedir)
@@ -266,7 +299,13 @@ class StudyBuilder:
             self._create_instance_infofile(instance)
             self._replace_placeholders(casedir, instance)
             if not self.build_once:
-                self.execute_build_script(os.path.join(casedir, "build.sh"))
+                # Force execution permissions to 'build.sh'
+                self.print_msg("--|Building...", verbose=True, end="")
+                build_script_path = os.path.join(casedir, "build.sh")
+                os.chmod(build_script_path, stat.S_IXUSR | 
+                         stat.S_IMODE(os.lstat(build_script_path).st_mode))
+                self.execute_build_script(build_script_path)
+                self.print_msg("Done", verbose=True)
         except Exception as error:
             shutil.rmtree(casedir)
             raise error
@@ -292,7 +331,6 @@ class StudyBuilder:
                     lines = placeholder_file.readlines()                                                                                                                                                                                                 
                 for ln, line in enumerate(lines):
                     line_opts = set(re.findall(r'\$\[([a-zA-Z0-9\-]+?)\]', line))
-                    # print path, line_opts
                     for opt in line_opts:
                         try:
                             lines[ln] = lines[ln].replace("$[" + opt + "]", str(instance[opt]))
@@ -308,16 +346,19 @@ class StudyBuilder:
              
             except Exception as error:
                 raise error
-                # print error
-            #print "".join(lines)
 
     #TODO: Decouple state and behaviour of instances into a new class
     def generate_instances(self):
         instance = {}
         self.instance_counter = 0
         # Check if build.sh has to be run before generating the instances
+        self.print_msg("Generating instances...")
         if os.path.exists(self.build_script_path):
             if self.build_once:
+                self.print_msg("Building once from 'build.sh'...")
+                # Force execution permissions to 'build.sh'
+                os.chmod(self.build_script_path, stat.S_IXUSR | 
+                         stat.S_IMODE(os.lstat(self.build_script_path).st_mode))
                 self.execute_build_script(self.build_script_path)
         else:
             if self.build_once:
@@ -329,11 +370,9 @@ class StudyBuilder:
                 instance.update(param)
             self._gen_comb_instance(instance, self.combinatoric_param_list)
             instance = {}
-
         self.study_file.write()
-        # with open("cases.txt", 'w') as manifest_file:
-        #     manifest_file.writelines(self.manifest_lines)
-        #     
+        self.print_msg("Success: Created %d cases." % self.nof_instances)
+
     def _build_instance_string(self, instance, short_name=False, only_params=False, style="file_name"):
         instance_string = ""
         assert not (short_name and only_params)
@@ -366,6 +405,7 @@ class StudyBuilder:
                             os.path.join(study_path, f))
         else:
             raise Exception("Directory '%s' already exists!" % study_path)
+        print "SUCCESS: Created study '%s'." % study_name 
 
 # Look for a remote. First look in the ConfigDir. If not present 
 def opts_get_remote(abs_remote_path, args):
@@ -396,8 +436,8 @@ if __name__ == "__main__":
     config_dir = ConfigDirectory()
     parser = argparse.ArgumentParser(description="Program to generate parameter studies.")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("-v", "--verbose", action="store_true")
-    group.add_argument("-q", "--quiet", action="store_true")
+    group.add_argument("-v", "--verbose", action="store_true", default=False)
+    group.add_argument("-q", "--quiet", action="store_true", default=False)
     actions_group = parser.add_mutually_exclusive_group()
     actions_group.add_argument("-c", "--create", metavar="study_name", help="Create an empty study template.")
     actions_group.add_argument("-g", "--generate", nargs="?", metavar="study_name", const=".", help="Generate the instances of the study based on the 'params.yaml' file.")
@@ -421,21 +461,20 @@ if __name__ == "__main__":
     parser.add_argument("--force", action="store_true", default=False, help="Specify remote for an action.")
     parser.add_argument("--paramfile", metavar="file_name", help="Specify path to paramfile.")
     parser.add_argument("--build-once", action="store_true", default=False, help="Study instances are short named.")
+    parser.add_argument("--debug", action="store_true", default=False, help="Debug mode.")
     args = parser.parse_args()
 
-    if args.quiet:
-        print "quiet"
 
-    elif args.verbose:
-        print "verbose"
-
-    elif args.create:
+    if args.create:
         study_name = args.create
         study_path = os.path.dirname(os.path.abspath(study_name))
         try:
             StudyBuilder.create_dir_structure(study_path, study_name)
         except Exception as error:
-            sys.exit(error)
+            if args.debug:
+                raise
+            else:
+                sys.exit(error)
 
     elif args.generate:
         study_name = args.generate
@@ -444,21 +483,27 @@ if __name__ == "__main__":
             sys.exit("Error:\nParameter file 'params.yaml' do not exists!")
         if not StudyBuilder.templatedir_exists(study_path):
             sys.exit("Error:\nTemplate directory do not exists!")
-        study =  StudyBuilder(study_path, short_name=args.shortname, build_once=args.build_once)
-        # try:
-        #     study =  StudyBuilder(".", short_name=args.shortname)
-        # except Exception as error:
-        #     sys.exit(error)
-        study.generate_instances()
+        try:
+            study =  StudyBuilder(study_path, short_name=args.shortname,
+                                  build_once=args.build_once, quiet=args.quiet,
+                                  verbose=args.verbose)
+            study.generate_instances()
+        except Exception as error:
+            if args.debug:
+                raise
+            else:
+                sys.exit(error)
 
     elif args.clean:
         study_name = args.clean
         study_path = os.path.abspath(study_name)
-        StudyBuilder.clean_study(study_path)
-        # try:
-        #     StudyBuilder.clean_study(study_path)
-        # except Exception as error:
-        #     sys.exit(error)
+        try:
+            StudyBuilder.clean_study(study_path)
+        except Exception as error:
+            if args.debug:
+                raise
+            else:
+                sys.exit(error)
 
     elif args.createremote:
         remote = remote.Remote()

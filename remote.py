@@ -231,7 +231,10 @@ class StudyManager:
     def submit_study(self):
         remote_studydir = os.path.join(self.remote.remote_workdir, self.study_name)
         if not self.remote.remote_dir_exists(remote_studydir):
+            print "Uploading study '%s'..." % self.study_name
             self.upload_study()
+        else:
+            print "Study '%s' found in remote '%s'." % self.remote.name
         self.study_file.read()
         if self.study_file.is_empty():
             raise Exception("File 'cases.txt' is empty. Cannot submit case.")
