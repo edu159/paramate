@@ -9,15 +9,81 @@ import sys
 import remote
 import getpass
 import subprocess
+import json
 
 SRC_DIR = os.path.dirname(os.path.realpath(__file__))
 DEFAULTS_DIR = os.path.join(SRC_DIR, "defaults")
 
-class ConfigDirectory:
-    def __init__(self):
-        self.default_dir = os.path.join(os.getenv("HOME"), ".parampy")
-        self.default_remotes_dir = os.path.join(self.default_dir, "remotes")
+# NOTE: NOT USED ANYMORE BUT USEFUL!
+# def str2type(l):
+#     def converter(l):
+#         for i in l:
+#             try:
+#                 yield json.loads(i)
+#             except ValueError:
+#
+#                 yield i
+#     return list(converter(l))
+#
 
+def _decode_case_selector(selector):
+    if selector is None:
+        return None
+    match_group = re.match("(\d+):(\d+)(?::(\d+))?$", selector)
+    if match_group is not None:
+        selector_split = selector.split(':')
+        rmin, rmax = int(selector_split[0]), int(selector_split[1])
+        if len(selector_split) == 3:
+            step = int(selector_split[2])
+        else:
+            step = 1
+        try:
+            return list(xrange(rmin, rmax+1, step))
+        except Exception:
+            raise Exception("Case selector range not well formed.")
+    match_group = re.match("\d+(?:,(?:\d+))*$", selector)
+    if match_group is not None:
+        return [int(c) for c in selector.split(',')]
+    return False
+
+
+
+def instance_dirstring(instance_id, params, nof_instances, short_name=False):
+    instance_string = ""
+    nof_figures = len(str(nof_instances))
+    instance_string = "%0*d_" % (nof_figures, instance_id)
+    if not short_name:
+        for pname, pval in params.items():
+            instance_string += "%s-%s_" % (pname, pval)
+    instance_string = instance_string[:-1]
+    return instance_string
+
+
+# Parampy params useful to build paths.
+def replace_placeholders(file_paths, params):
+    for path in file_paths:
+        try:
+            lines = []
+            with open(path, 'r') as placeholder_file:
+                lines = placeholder_file.readlines()                                                                                                                                                                                                 
+            for ln, line in enumerate(lines):
+                line_opts = set(re.findall(r'\$\[([a-zA-Z0-9\-]+?)\]', line))
+                for opt in line_opts:
+                    try:
+                        lines[ln] = lines[ln].replace("$[" + opt + "]", str(params[opt]))
+                    except KeyError as error:
+                        raise Exception("Parameter '%s' not present." % opt)
+            with open(path, 'w+') as replaced_file:
+                replaced_file.writelines(lines)
+        except Exception as error:
+            raise error
+
+
+# class ConfigDirectory:
+#     def __init__(self):
+#         self.default_dir = os.path.join(os.getenv("HOME"), ".parampy")
+#         self.default_remotes_dir = os.path.join(self.default_dir, "remotes")
+#
 class StudySection:
     pass
 class ParamsSection:
@@ -93,53 +159,115 @@ class ParamFile:
     def add_section(self, section, opts):
         self.config_data[section] = opts
 
+    #TODO: Add this to the specific DownloadSection object
+    def get_download_paths(self, case):
+        path_list = []
+        case_path = os.path.join(self.path, case)
+        try:
+            paths = self["DOWNLOAD"]
+            for path in paths:
+                current_path = os.path.join(case_path, path["path"])
+                try:
+                    include_files = path["include"]
+                    for f in include_files:
+                        path_list.append(os.path.join(current_path, f))
+                except KeyError:
+                    try:
+                        import glob
+                        exclude = [os.path.join(current_path, p)  for p in path["exclude"]]
+                        all_files = glob.glob(os.path.join(current_path, "*"))
+                        # print all_files, exclude
+                        path_list.extend(list(set(all_files) - set(exclude)))
+                    except KeyError:
+                        path_list.append(current_path)
+        except KeyError:
+            #BY default case/postproc and case/output are the ones to download
+            path_list.append(os.path.join(case_path, "postproc"))
+            path_list.append(os.path.join(case_path, "output") )
+        return path_list
+
+
     def __getitem__(self, key):
         if self.loaded:
             return self.params_data[key]
         else:
             raise Exception()
 
+JOB_STATES = ["CREATED", "UPLOADED", "SUBMITTED", "FINISH", "DOWNLOADED"]
+
 class StudyFile:
-    def __init__(self, path='.', fname="cases.txt"):
+    def __init__(self, path='.', fname="cases.info"):
         self.lines = []
         self.fname = fname
         self.cases = []
-        self.abspath = os.path.join(os.path.abspath(path), fname)
+        self.file_path = os.path.join(os.path.abspath(path), fname)
+        self.nof_cases = 0
 
-    def add_instance(self, nof_instances, instance_no, param_str):
-        line = []
-        nof_figures = len(str(nof_instances))
-        instance_string = "%0*d" % (nof_figures, instance_no)
-        line.append(str(instance_string))
-        line.append(param_str)
-        line.append("CREATED")
-        self.lines.append(line)
+    def backup(self, dest):
+        shutil.copy(self.file_path, os.path.join(dest, "cases.info.bak"))
 
-    def get_instance(self, name):
-        pass
+    def restore(self, orig):
+        shutil.copy(os.path.join(orig, "cases.info.bak"), self.file_path)
 
-    def _studyfile2fname(self, param_str):
-        return ""
+    def add_instance(self, params, short_name=False):
+        self.nof_cases += 1
+        self.cases.append({"id": self.nof_cases, 
+                           "params": params.copy(), 
+                           "shortname": short_name,
+                           "jid": None,
+                           "status": "CREATED",
+                           "req_time": None,
+                           "remote": None,
+                           "sub_date": None,
+                           "name":"" })
+
+    def clean_case(self, idx):
+        self.cases[idx-1]["jid"] = None 
+        self.cases[idx-1]["status"] = "CREATED"
+        self.cases[idx-1]["req_time"] = None
+        self.cases[idx-1]["sub_date"] = None
+        self.cases[idx-1]["remote"] = None
+
+
+    def get_cases(self, search_vals, field, sortby=None):
+        match_list = []
+        for case in self.cases:
+            if case[field] in search_vals:
+                match_list.append(case)
+        return match_list
+# for case in download_cases:
+#             try:
+#                 remote_cases[case["remote"]].append(case)
+#             except KeyError:
+#                 remote_case[case["remote"]] = []
+#                 remote_cases[case["remote"]].append(case)
+#
+
 
     def read(self):
-        with open(self.abspath, "r") as rfile:
-            self.lines = rfile.readlines()
-            for l in self.lines:
-                ls = l.split(':')
-                #TODO: Change style in parameter string. Now the same as in file name.
-                self.cases.append(("%s_%s" % (ls[0], ls[1]), ls[2].rstrip()))
-            
+        with open(self.file_path, 'r') as rfile:
+            json_data = rfile.read()
+            json_data = json.loads(json_data)
+            self.cases = json_data["cases"]
+            self.nof_cases = len(self.cases)
+
     def write(self):
-        lines_str = []
-        for l in self.lines:
-            lines_str.append(":".join(l) + "\n")
-        with open(self.abspath, "w") as wfile:
-            wfile.writelines(lines_str)
+        with open(self.file_path, 'w') as wfile:
+            for i, case in enumerate(self.cases):
+                case["name"] = instance_dirstring(i+1, case["params"], self.nof_cases,
+                                                  short_name=case["shortname"])
+            json_data = {"date": "May", "cases": self.cases}
+            wfile.write(json.dumps(json_data, indent=4, sort_keys=True))
+
+    def update_case(self, id_field, values):
+        pass
+
 
     def is_empty(self):
         pass
+
     @staticmethod
-    def exists(path, fname="cases.txt"):
+    def exists(path, fname="cases.info"):
         return os.path.exists(os.path.join(path, fname))
 
 class MessagePrinter(object):
@@ -187,6 +315,7 @@ class StudyBuilder(MessagePrinter):
         self.study_file = StudyFile(path=self.study_path)
         self.template_path = os.path.join(self.study_path, "template")
         self.build_script_path = os.path.join(self.template_path, "build.sh")
+        self.instance_name = None
 
     def execute_build_script(self, build_script_path):
         output = ""
@@ -218,26 +347,62 @@ class StudyBuilder(MessagePrinter):
         return os.path.exists(p)
 
     @staticmethod
-    def clean_study(path):
+    def clean_study(path, case_selector):
+        study_file = StudyFile(path=path)
+        if study_file.exists(path):
+            study_file.read()
+            if case_selector == '*':
+                case_idx = list(xrange(1, study_file.nof_cases+1))
+            else:
+                case_idx = _decode_case_selector(case_selector)
+                if not case_idx:
+                    raise Exception("Case selector malformed.")
+            for i in case_idx:
+                if i > study_file.nof_cases:
+                    raise Exception("Index '%d' out of range. The number of cases is '%d'." % (i, study_file.nof_cases))
+                if i == 0:
+                    raise Exception("Index 0 found. Case indices start at 1.")
+
+            print "Cleaning '%d' cases..." % len(case_idx)
+            param_file = ParamFile()
+            param_file.load(path)
+            for idx in case_idx:
+                study_file.clean_case(idx)
+                d = param_file.get_download_paths(study_file.cases[idx-1]["name"])
+                #TODO: Remove files for real
+                print study_file.cases[idx-1]["name"]
+                print d 
+                # shutil.rmtree()
+            study_file.write()
+            print "Done."
+        else:
+            print "Nothing to clean, file 'cases.info' not found."
+
+    
+    @staticmethod
+    def erase_study(path):
         study_file = StudyFile(path=path)
         if study_file.exists(path):
             study_file.read()
             if not study_file.is_empty():
                     print "Deleting %d cases..." % len(study_file.cases)
-                    for f in study_file.cases:
+                    for case in study_file.cases:
+                        f = instance_dirstring(case["id"], case["params"],
+                                               study_file.nof_cases,
+                                               short_name=case["shortname"])
                         try:
-                            shutil.rmtree(os.path.join(path, f[0]))
+                            shutil.rmtree(os.path.join(path, f))
                         except Exception as error:
                             pass
-                    print "Deleting file 'cases.txt'..."
-                    os.remove(os.path.join(path, "cases.txt"))
+                    print "Deleting file 'cases.info'..."
+                    os.remove(os.path.join(path, "cases.info"))
             print "Done."
         else:
-            print "Nothing to delete, file 'cases.txt' not found."
+            print "Nothing to delete, file 'cases.info' not found."
 
 
     def _create_instance_infofile(self, instance):
-        f = os.path.join(self._build_instance_string(instance, self.short_name), "instance.info")
+        f = os.path.join(self.instance_name, "instance.info")
         f = os.path.join(self.study_path, f)
         open(f, 'a').close()
 
@@ -245,6 +410,8 @@ class StudyBuilder(MessagePrinter):
         try:
             self.param_file = ParamFile()
             self.param_file.load(self.study_path)
+            #Include build.sh by default
+            self.param_file["FILES"].append({"path": ".", "files": ["build.sh"]})
         except Exception as error:
             raise Exception(error)
             
@@ -284,20 +451,34 @@ class StudyBuilder(MessagePrinter):
         else:
             self.instance_counter += 1
             self._create_instance(instance)
-            self.study_file.add_instance(self.nof_instances, self.instance_counter,
-                                         self._build_instance_string(instance, short_name=False,
-                                         only_params=True, style="file_name"))
-
+            multival_params = self._get_multival_params(instance)
+            self.study_file.add_instance(multival_params, short_name=self.short_name)
     
     #TODO: Create a file with instance information
     def _create_instance(self, instance):
-        self.print_msg("Creating instance '%s'..." % self._build_instance_string(instance, self.short_name), verbose=True)
-        casedir = os.path.join(self.study_path, self._build_instance_string(instance, self.short_name))
+        multival_params = self._get_multival_params(instance)
+        self.instance_name = instance_dirstring(self.instance_counter, multival_params,
+                                                   self.nof_instances, self.short_name)
+        self.print_msg("Creating instance '%s'..." % self.instance_name, verbose=True)
+        casedir = os.path.join(self.study_path, self.instance_name)
         studydir = os.path.dirname(casedir)
         shutil.copytree(self.template_path, casedir)
         try:
             self._create_instance_infofile(instance)
-            self._replace_placeholders(casedir, instance)
+            # Create paths for files listed for replace params on them
+            file_paths =  []
+            for path in self.param_file["FILES"]:
+                for f in path["files"]:
+                    p = os.path.join(os.path.join(self.study_path, self.instance_name), path["path"])
+                    p = os.path.join(p, f)
+                    file_paths.append(p)
+            # Add parampy specific params
+            params = {"PARAMPY-CN": self.instance_name,
+                      "PARAMPY-SN": self.param_file["STUDY"]["name"],
+                      "PARAMPY-CD": casedir, 
+                      "PARAMPY-SD": studydir}
+            params.update(instance)
+            replace_placeholders(file_paths, params)
             if not self.build_once:
                 # Force execution permissions to 'build.sh'
                 self.print_msg("--|Building...", verbose=True, end="")
@@ -309,43 +490,6 @@ class StudyBuilder(MessagePrinter):
         except Exception as error:
             shutil.rmtree(casedir)
             raise error
-
-
-
-    def _replace_placeholders(self, dirname, instance):
-        file_paths =  []
-        build_string = self._build_instance_string(instance, self.short_name)
-        for path in self.param_file["FILES"]:
-            for f in path["files"]:
-                p = os.path.join(os.path.join(self.study_path, build_string), path["path"])
-                p = os.path.join(p, f)
-                file_paths.append(p)
-
-        # Parampy params useful to build paths.
-        parampy_params = {"PARAMPY-CASENAME": self._build_instance_string(instance, self.short_name),
-                          "PARAMPY-STUDYNAME": self.param_file["STUDY"]["name"]}
-        for path in file_paths:
-            try:
-                lines = []
-                with open(path, 'r') as placeholder_file:
-                    lines = placeholder_file.readlines()                                                                                                                                                                                                 
-                for ln, line in enumerate(lines):
-                    line_opts = set(re.findall(r'\$\[([a-zA-Z0-9\-]+?)\]', line))
-                    for opt in line_opts:
-                        try:
-                            lines[ln] = lines[ln].replace("$[" + opt + "]", str(instance[opt]))
-                        except KeyError as error:
-                            try:
-                                lines[ln] = lines[ln].replace("$[" + opt + "]", str(parampy_params[opt]))
-                            except KeyError as error:
-                                # All placeholders has to be replaced and must be in params.
-                                raise Exception("Parameter '%s' not present." % opt)
-                with open(path, 'w+') as replaced_file:
-                    replaced_file.writelines(lines)
-
-             
-            except Exception as error:
-                raise error
 
     #TODO: Decouple state and behaviour of instances into a new class
     def generate_instances(self):
@@ -373,21 +517,8 @@ class StudyBuilder(MessagePrinter):
         self.study_file.write()
         self.print_msg("Success: Created %d cases." % self.nof_instances)
 
-    def _build_instance_string(self, instance, short_name=False, only_params=False, style="file_name"):
-        instance_string = ""
-        assert not (short_name and only_params)
-        if not only_params:
-            nof_figures = len(str(self.nof_instances))
-            instance_string = "%0*d_" % (nof_figures, self.instance_counter)
-        if not short_name:
-            for pname, pval in instance.items():
-                if pname in self.multival_keys:
-                    if style == "file_name":
-                        instance_string += "%s-%s_" % (pname, pval)
-                    elif style == "study_file":
-                        instance_string += "%s(%s)," % (pname, pval)
-        instance_string = instance_string[:-1]
-        return instance_string
+    def _get_multival_params(self, instance):
+        return {k:v for k,v in instance.items() if k in self.multival_keys}
 
     @classmethod 
     def create_dir_structure(cls, path, study_name):
@@ -410,30 +541,18 @@ class StudyBuilder(MessagePrinter):
 # Look for a remote. First look in the ConfigDir. If not present 
 def opts_get_remote(abs_remote_path, args):
     r = remote.Remote()
-    if args.remote:
-        remote_yaml_path = os.path.join(config_dir.default_remotes_dir, args.remote + ".yaml")
-        try:
-            r.load(remote_yaml_path)
-        except Exception as error:
-            sys.exit("Error: Remote '%s' not found." % args.remote)
-            
-    else:
-        remote_yaml_path = os.path.join(abs_remote_path, "remote.yaml")
-        print remote_yaml_path
-        try:
-            r.load(remote_yaml_path)
-        except Exception as error:
-            try:
-                r.load(remote_yaml_path)
-                # TODO: default remote here instead of repeating this
-            except Exception:
-				sys.exit("Error: File 'remote.yaml' not found in current directory and default remote not defined.")
+    remote_yaml_path = os.path.join(abs_remote_path, "remote.yaml")
+    print remote_yaml_path
+    try:
+        r.load(remote_yaml_path, args.remote)
+    except IOError as error:
+        sys.exit("Error: File 'remote.yaml' not found in study directory.")
     return r
 
 
 if __name__ == "__main__":
     import argparse
-    config_dir = ConfigDirectory()
+    # config_dir = ConfigDirectory()
     parser = argparse.ArgumentParser(description="Program to generate parameter studies.")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("-v", "--verbose", action="store_true", default=False)
@@ -443,12 +562,9 @@ if __name__ == "__main__":
     actions_group.add_argument("-g", "--generate", nargs="?", metavar="study_name", const=".", help="Generate the instances of the study based on the 'params.yaml' file.")
     actions_group.add_argument("--check", action="store_true", 
 			help="Check if the study is consistent with 'params.yaml' file.")
-    actions_group.add_argument("-r", "--clean", nargs="?", metavar="study_name", const=".", help="Clean the instances of the study.")
+    actions_group.add_argument("--clean", nargs="?", metavar="cases_list", const='*', help="Clean the instances of a study.")
+    actions_group.add_argument("--erase", nargs="?", metavar="cases_list", const=".", help="Erase the instances of a study.")
     actions_group.add_argument("-i", "--info", action="store_true", help="Get a resumed info of the study.")
-    actions_group.add_argument("--createremote", action="store_true", help="Create a remote template.")
-    actions_group.add_argument("--addremote", action="store_true", help="Add a remote.")
-    actions_group.add_argument("--delremote", action="store_true", help="Delete a remote.")
-    actions_group.add_argument("--listremote", action="store_true", help="List all saved remotes.")
     actions_group.add_argument("-u", "--upload-case", metavar="case_name", help="Upload case to remote.")
     actions_group.add_argument("-U", "--upload-study", nargs="?", const=".", metavar="study_name", help="Upload study to remote.")
     actions_group.add_argument("-s", "--submit-case", metavar="case_name", help="Submit case to execution.")
@@ -457,7 +573,9 @@ if __name__ == "__main__":
     actions_group.add_argument("-D", "--download-study", nargs="?", const=".", metavar="study_name", help="Download study from remote.")
     actions_group.add_argument("-l", "--status", nargs="?", const=".", metavar="study_name", help="Download study from remote.")
     parser.add_argument("--shortname", action="store_true", default=False, help="Study instances are short named.")
-    parser.add_argument("--remote", metavar="remote_name", help="Specify remote for an action.")
+    parser.add_argument("--cases", metavar="case_indices", help="Case selector.")
+    parser.add_argument("--array-job", action="store_true", default=False, help="Submit the study as a array of jobs.")
+    parser.add_argument("--remote", nargs="?", const=None, metavar="remote_name", help="Specify remote for an action.")
     parser.add_argument("--force", action="store_true", default=False, help="Specify remote for an action.")
     parser.add_argument("--paramfile", metavar="file_name", help="Specify path to paramfile.")
     parser.add_argument("--build-once", action="store_true", default=False, help="Study instances are short named.")
@@ -495,22 +613,25 @@ if __name__ == "__main__":
                 sys.exit(error)
 
     elif args.clean:
-        study_name = args.clean
+        study_name = "."
         study_path = os.path.abspath(study_name)
         try:
-            StudyBuilder.clean_study(study_path)
+            StudyBuilder.clean_study(study_path, args.clean)
         except Exception as error:
             if args.debug:
                 raise
             else:
                 sys.exit(error)
 
-    elif args.createremote:
-        remote = remote.Remote()
+    elif args.erase:
+        study_path = os.path.abspath(args.erase)
         try:
-            remote.create_remote_template(".")
+            StudyBuilder.erase_study(study_path)
         except Exception as error:
-            sys.exit(error)
+            if args.debug:
+                raise
+            else:
+                sys.exit(error)
 
     elif args.upload_case:
         abs_remote_path = os.path.abspath(args.upload_case)
@@ -543,8 +664,10 @@ if __name__ == "__main__":
         except Exception as error:
             sys.exit(error)
         sm = remote.StudyManager(r, study_path=abs_remote_path)
+        case_selector = args.cases
+        cases_idx = _decode_case_selector(case_selector)
         try:
-            sm.upload_study(force=args.force)
+            sm.upload_study(cases_idx=cases_idx, array_job=args.array_job, force=args.force)
         except Exception as error:
             r.close()
             sys.exit(error)
@@ -581,11 +704,12 @@ if __name__ == "__main__":
         except Exception as error:
             sys.exit(error)
         sm = remote.StudyManager(r, study_path=abs_remote_path)
-        try:
-            sm.submit_study()
-        except Exception as error:
-            r.close()
-            sys.exit(error)
+        sm.submit_study(force=args.force)
+        # try:
+        #     sm.submit_study()
+        # except Exception as error:
+        #     r.close()
+        #     sys.exit(error)
         r.close()
 
     elif args.download_study:
@@ -620,7 +744,7 @@ if __name__ == "__main__":
         except Exception as error:
             sys.exit(error)
         sm = remote.StudyManager(r, study_path=abs_remote_path)
-        sm.status()
+        sm.update_status()
         # try:
         #     sm.status()
         # except Exception as error:
