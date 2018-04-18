@@ -9,7 +9,7 @@ import getpass
 import tarfile
 from scp import SCPClient
 import socket
-from parampy import StudyFile, ParamFile, replace_placeholders
+from parampy import InfoFile, ParamFile, replace_placeholders
 
 
 #TODO: Refactor Remote to separate configuration-related stuff
@@ -114,7 +114,7 @@ class Remote:
             return True
         except socket.timeout:
             return False
-        else:
+        except Exception:
             return False
 
     def connect(self, passwd=None, timeout=None):
@@ -172,156 +172,112 @@ class RemoteFileExists(Exception):
 
 
 class StudyManager:
-    def __init__(self, remote, study_path=None, case_path=None):
-        assert study_path is not None or case_path is not None
-        self.remote = remote
-        if study_path is not None:
-            self.study_path = os.path.abspath(study_path)
-            self.study_file = StudyFile(path=self.study_path)
-        else:
-            self.study_path = None
-        self.case_path = case_path
-        self.case_name = None
-        self.DEFAULT_UPLOAD_FILES = ["manage.py", "cases.info", "README", "submit_arrayjob.sh"]
-        if case_path is not None:
-            self.case_path = os.path.abspath(self.case_path)
-            self.case_name = os.path.basename(self.case_path)
-            self.study_path = os.path.dirname(self.case_path)
-            self.study_name = os.path.basename(self.study_path)
-            self.study_file = StudyFile(path=self.study_path)
-            # Check if the cases.info has been generated. Meaning it is a study.
-            if not self.study_file.exists(self.study_path):
-                self.study_name = "default"
-        else:
-            self.study_name = os.path.basename(self.study_path)
+    def __init__(self, study, verbose=False, quiet=False):
+        self.DEFAULT_UPLOAD_FILES = ["manage.py", "cases.info", "README"]
         self.tmpdir = "/tmp"
-        self.param_file = ParamFile()
-        self.study_file.read()
+        self.study = study
+        self.verbose = verbose
+        self.quiet = quiet
      
-    def _upload(self, name, base_path, upload_paths, keep_targz=False, force=False, workdir=None):
-        print upload_paths
-        if workdir is None:
-            workdir = self.remote.workdir
+    def _upload(self, remote, name, base_path, upload_cases, keep_targz=False, force=False):
+        workdir = remote.workdir
         remotedir = os.path.join(workdir, name)
-        if self.remote.remote_dir_exists(remotedir):
-            if not force:
-                raise RemoteDirExists("")
-        tar_name = self._compress(name, base_path, upload_paths)
+        for case in upload_cases:
+            remote_casedir = os.path.join(remotedir, case)
+            if remote.remote_dir_exists(remote_casedir):
+                if not force:
+                    raise RemoteDirExists("Study '%s' - Case directory '%s' already exists in remote '%s'."\
+                                          % (self.study.name, case, remote.name))
+        upload_files = upload_cases + self.DEFAULT_UPLOAD_FILES
+        tar_name = self._compress(name, base_path, upload_files)
         upload_src = os.path.join(self.tmpdir, tar_name)
         upload_dest = workdir
-        self.remote.upload(upload_src, upload_dest)
+        remote.upload(upload_src, upload_dest)
         extract_src = os.path.join(upload_dest, tar_name)
         extract_dest = upload_dest
         try:
-            out = self.remote.command("tar -xzf %s --directory %s --warning=no-timestamp" % (extract_src, extract_dest), close_on_error=False)
+            out = remote.command("tar -xzf %s --directory %s --warning=no-timestamp" % (extract_src, extract_dest), close_on_error=False)
             # For older versions of tar. Not sure how they will handle the timestamp issue though.
         except Exception as error:
-            out = self.remote.command("tar -xzf %s --directory %s" % (extract_src, extract_dest))
+            out = remote.command("tar -xzf %s --directory %s" % (extract_src, extract_dest))
 
         
         os.remove(upload_src)
         if not keep_targz:
-            out = self.remote.command("rm -f %s" % extract_src)
+            out = remote.command("rm -f %s" % extract_src)
 
-    def upload_case(self, keep_targz=False, force=False):
-        # self._case_clean()
-        workdir = os.path.join(self.remote.workdir, self.study_name)
-        if not self.remote.remote_dir_exists(workdir):
-            out = self.remote.command("mkdir %s" % workdir)
-        try:
-            self._upload(self.case_name, self.case_path, keep_targz, force, workdir)
-        except RemoteDirExists:
-            raise RemoteDirExists("Case '%s' already exists in study '%s' in the remote '%s'." % (self.case_name,self.study_name, self.remote.name))
+    
+    def upload(self, remote, array_job=False, keep_targz=False, force=False):
+        params = {"PARAMPY-CD": "",
+                  "PARAMPY-CN": "", 
+                  "PARAMPY-RWD": remote.workdir, 
+                  "PARAMPY-LWD": os.path.dirname(self.study.path), 
+                  "PARAMPY-SN": self.study.name,
+                  "PARAMPY-SD": self.study.path}
+        template_script_path = os.path.join(self.study.path, "submit.%s.sh" % remote.name)
+        submit_script_path = ""
+        upload_cases = self.study.case_selection
+        # Check if the case state is compatible with uploading
+        for case in upload_cases:
+            if not (case.remote is None and case.status == "CREATED"):
+                msg = ""
+                if case.status == "UPLOADED":
+                    msg = "Case '%s' has already been uploaded to remote '%s'." % (case.name, remote.name)
+                elif case.status == "SUBMITTED":
+                    msg = "Case '%s' has already been submitted to remote '%s'." % (case.name, remote.name)
+                elif case.status == "FINISH":
+                    msg = "Case '%s' has already finished execution in remote '%s'." % (case.name, remote.name)
+                elif case.status == "DOWNLOADED":
+                    msg = "Case '%s' has already been downloaded from remote '%s'." % (case.name, remote.name)
+                msg += "\nInfo: Use '--clean' option to reset case to a creation state."
+                raise Exception(msg)
 
-
-    # def _get_arrayjob_shell_cmd(path, nof, shortname=False, shell="bash", queue="pbs"):
-    #     nof = len(str(self.nof_instances))
-    #     array_idx_var = ""
-    #     if queue == "pbs":
-    #         array_idx_var = "PBS_ARRAY_INDEX"
-    #     s = ""
-    #     if shell == "bash":
-    #         if shortname:
-    #             s = '$(printf "%%0*d" %s $%s)' % (nof, array_idx_var)
-    #         else:
-    #             s = '$(printf "%%0*d" %s $%s)_$(cat cases.info| grep -e ' % (nof, array_idx_var) +\
-    #                     'grep -e "^$(printf "%%0*d" %s $%s)"  |' +\
-    #                     'sed -r "s/\(\"([^\"]+)\"\)/_\1/g" | cut -d : -f2)' % (nof, array_idx_var)
-    #     return s
-    #
-
-    def upload_study(self, cases_idx=None, array_job=False, keep_targz=False, force=False):
-        try:
-            params = {"PARAMPY-CD": "",
-                      "PARAMPY-CN": "", 
-                      "PARAMPY-RWD": self.remote.workdir, 
-                      "PARAMPY-LWD": os.path.dirname(self.study_name), 
-                      "PARAMPY-SN": self.study_name,
-                      "PARAMPY-SD": self.study_path}
-            template_script_path = os.path.join(self.study_path, "submit.%s.sh" % self.remote.name)
-            submit_script_path = ""
-            if cases_idx is None:
-                cases_idx = list(xrange(1, self.study_file.nof_cases+1))
-            upload_cases = self.study_file.get_cases(cases_idx, "id")
-            # Check if the case state is compatible with uploading
-            for case in upload_cases:
-                if not (case["remote"] is None and case["status"] == "CREATED"):
-                    msg = ""
-                    if case["status"] == "UPLOADED":
-                        msg = "Case '%s' has already been uploaded to remote '%s'." % (case["name"], self.remote.name)
-                    elif case["status"] == "SUBMITTED":
-                        msg = "Case '%s' has already been submitted to remote '%s'." % (case["name"], self.remote.name)
-                    elif case["status"] == "FINISH":
-                        msg = "Case '%s' has already finished execution in remote '%s'." % (case["name"], self.remote.name)
-                    elif case["status"] == "DOWNLOADED":
-                        msg = "Case '%s' has already been downloaded from remote '%s'." % (case["name"], self.remote.name)
-                    msg += "\nINFO: Use '--clean' option to reset case to a creation state."
-                    raise Exception(msg)
-            if os.path.exists(template_script_path):
-                if array_job:
-                    submit_script_path = os.path.join(self.study_path, "submit_array.sh")
+        # Create submission scripts
+        if os.path.exists(template_script_path):
+            if array_job:
+                submit_script_path = os.path.join(self.study.path, "submit_array.sh")
+                shutil.copy(template_script_path, submit_script_path)
+                remote_study_path = os.path.join(remote.workdir, self.study.name)
+                params["PARAMPY-CN"] = "$(python2 %s/manage.py case-param $PBS_ARRAY_INDEX name)" % remote_study_path
+                params["PARAMPY-CD"] = os.path.join(self.study.path, params["PARAMPY-CN"])
+                try:
+                    replace_placeholders([submit_script_path], params)
+                except Exception:
+                    os.remove(submit_script_path)
+                    raise
+            else:
+                for case in upload_cases:
+                    case_path = os.path.join(self.study.path, case.name)
+                    submit_script_path = os.path.join(case_path, "submit.sh")
                     shutil.copy(template_script_path, submit_script_path)
-                    remote_study_path = os.path.join(self.remote.workdir, self.study_name)
-                    params["PARAMPY-CN"] = "$(python2 %s/manage.py case-param $PBS_ARRAY_INDEX name)" % remote_study_path
-                    params["PARAMPY-CD"] = os.path.join(self.study_path, params["PARAMPY-CN"])
+                    params["PARAMPY-CN"] = case.name
+                    params["PARAMPY-CD"] = case_path
+                    params.update(case.params)
                     try:
                         replace_placeholders([submit_script_path], params)
                     except Exception:
                         os.remove(submit_script_path)
                         raise
-                else:
-                    for case in upload_cases:
-                        case_path = os.path.join(self.study_path, case["name"])
-                        submit_script_path = os.path.join(case_path, "submit.sh")
-                        shutil.copy(template_script_path, submit_script_path)
-                        params["PARAMPY-CN"] = case["name"]
-                        params["PARAMPY-CD"] = case_path
-                        params.update(case["params"])
-                        try:
-                            replace_placeholders([submit_script_path], params)
-                        except Exception:
-                            os.remove(submit_script_path)
-                            raise
-                        
-            else:
-                raise Exception("Submission script 'submit.%s.sh' not found in study directory." % self.remote.name)
-            # Set cases as uploaded
-            for case in upload_cases:
-                case["status"] = "UPLOADED"
-                case["remote"] = self.remote.name
-            self.study_file.backup(self.tmpdir)
-            # Modify the study file so it is uploaded updated.
-            try:
-                self.study_file.write()
-                upload_paths = [case["name"] for case in upload_cases]
-                upload_paths.extend(self.DEFAULT_UPLOAD_FILES)
-                # self._upload(self.study_name, self.study_path, upload_paths, keep_targz, force)
-            except Exception:
-                self.study_file.restore(self.tmpdir)
-                raise
+                    
+        else:
+            raise Exception("Submission script 'submit.%s.sh' not found in study directory." % self.remote.name)
 
-        except RemoteDirExists:
-            raise RemoteDirExists("Study '%s' already exists in remote '%s'." % (self.study_name, self.remote.name))
+        # Set cases as uploaded
+        for case in upload_cases:
+            case.status = "UPLOADED"
+            case.remote = remote.name
+        self.study.study_file.backup(self.tmpdir)
+        # Modify the study file so it is uploaded updated.
+        try:
+            self.study.save()
+            upload_paths = [case.name for case in upload_cases]
+            if array_job:
+                upload_paths.extend("submit_arrayjob.sh")
+            self._upload(remote, self.study.name, self.study.path, upload_paths, keep_targz, force)
+        except Exception:
+            self.study.study_file.restore(self.tmpdir)
+            raise
+
 
     def _compress(self, name, base_path, upload_paths):
         tar_name = name + ".tar.gz"
@@ -329,6 +285,10 @@ class StudyManager:
             for path in upload_paths:
                 tar.add(os.path.join(base_path, path), arcname=os.path.join(name, path))
         return tar_name
+
+    def _decompress(self, src_path, dest_path):
+        with tarfile.open(src_path, "r:gz") as tar:
+            tar.extractall(dest_path)
         
     def submit_case(self, force=False):
         workdir = os.path.join(self.remote.workdir, self.study_name)
@@ -342,6 +302,18 @@ class StudyManager:
         except Exception as error:
             if self.remote.command_status == 127:
                 raise Exception("Command 'qsub' not found in remote '%s'." % self.remote.name)
+
+    def _cases_regexp(self):
+        regexp = ""
+        for case in self.study.case_selection:
+            regexp += "%0*d" % (len(str(self.study.nof_cases)), case.id)
+            if not case.short_name:
+                regexp += "_"
+            regexp += "*,"
+        if regexp:
+            regexp =  "{" + regexp.rstrip() + "}"
+        return regexp
+
 
     def submit_study(self, force=False, array_job=False):
         remote_studydir = os.path.join(self.remote.workdir, self.study_name)
@@ -375,84 +347,97 @@ class StudyManager:
         print "Submitted %d cases." % len(self.study_file.cases)
 
 
-    def update_status(self):
-        try:
-            time.sleep(0.1)
-            awk = "awk 'match($0,/[0-9]+/){print substr($0, RSTART, RLENGTH)}'"
-            output = self.remote.command("qstat -t | %s" % awk, timeout=10)
-            print output
-        except Exception as error:
-            if self.remote.command_status == 127:
-                raise Exception("Command 'qstat' not found in remote '%s'." % self.remote.name)
+    def update_status(self, remote):
+        if not remote.cmd_avail("qstat"):
+            raise Exception("Command 'qstat' not available in remote '%s'." % self.remote.name)
+        awk = "awk 'match($0,/[0-9]+/){print substr($0, RSTART, RLENGTH)}'"
+        output = remote.command("qstat | %s" % awk, timeout=10)
+        job_ids  = [jid.rstrip() for jid in output]
+        for case in self.study.case_selection:
+            if not (case.id in job_ids) and case.status == "SUBMITTED":
+                case.status = "FINISHED"
+        self.study.save()
+
+    def download_study(self, remote, force=False):
+        remote_studydir = os.path.join(remote.workdir, self.study.name)
+        if not remote.remote_dir_exists(remote_studydir):
+            raise Exception("Study '%s' does not exists in remote '%s'." % (self.study_name, self.remote.name))
+        compress_dirs = ""
+        cases_regexp = self._cases_regexp()
+        for path in self.study.param_file["DOWNLOAD"]:
+            include_list = []
+            exclude_list = []
+            path_name = path["path"]
+            # TODO: Move checks of params.yaml to the Sections checkers in parampy.py
+            include_exists = "include" in path
+            exclude_exists = "exclude" in path
+            path_wildcard = os.path.join(cases_regexp, path["path"])
+            if exclude_exists and include_exists:
+                raise Exception("Both 'exclude' and 'include' defined for download path '%s'."\
+                                % path["path"])
             else:
-                raise Exception(error)
-
-    def download_study(self, cases_idx=None, force=False):
-        if cases_idx is None:
-            cases_idx = list(xrange(1, self.study_file.nof_cases+1))
-        download_cases = self.study_file.get_cases(cases_idx, "id")
-        remote_cases = {}
-        for case in download_cases:
-            try:
-                remote_cases[case["remote"]].append(case)
-            except KeyError:
-                remote_case[case["remote"]] = []
-                remote_cases[case["remote"]].append(case)
-        print remote_cases
-        sys.exit()
-        remote_studydir = os.path.join(self.remote.workdir, self.study_name)
-        # if not self.remote.remote_dir_exists(remote_studydir):
-        #     raise Exception("Study does not exists in remote '%s'." % self.remote.name)
-        if self.study_file.is_empty():
-            raise Exception("File 'cases.info' is empty. Cannot download case.")
-        else:
-            self.param_file.load(self.study_path)
-            compress_dirs = ""
-            for path in self.param_file["DOWNLOAD"]:
-                include_list = []
-                exclude_list = []
-                path_name = path["path"]
-                # TODO: Move checks of params.yaml to the Sections checkers in parampy.py
-                include_exists = "include" in path
-                exclude_exists = "exclude" in path
-                #TODO: CHANGE to "{name1, name2}/path"
-                path_wildcard = os.path.join("[0-9]*", path["path"])
-                if exclude_exists and include_exists:
-                    raise Exception("Both 'exclude' and 'include' defined for download path '%s'."\
-                                    % path["path"])
+                if include_exists:
+                    include_list = [os.path.join(path_wildcard, f) for f in path["include"]]
+                    compress_dirs += " " + " ".join(include_list)
+                elif exclude_exists:
+                    exclude_list = path["exclude"]
+                    for f in exclude_list:
+                        compress_dirs += " --exclude=%s" % f
+                    compress_dirs += " " + path_wildcard
                 else:
-                    if include_exists:
-                        include_list = [os.path.join(path_wildcard, f) for f in path["include"]]
-                        compress_dirs += " " + " ".join(include_list)
-                    elif exclude_exists:
-                        exclude_list = path["exclude"]
-                        for f in exclude_list:
-                            compress_dirs += " --exclude=%s" % f
-                        compress_dirs += " " + path_wildcard
-                    else:
-                        compress_dirs += " " + path_wildcard
+                    compress_dirs += " " + path_wildcard
 
-            compress_src = os.path.join(remote_studydir, self.study_name + ".tar.gz")
-            tar_cmd = "tar -czf %s %s" % (compress_src, compress_dirs)
-            force = True
-            # print "Compressing study..."
-            # try:
-            #     if force:
-            #         tar_cmd += " --ignore-failed-read"
-            #     self.remote.command("cd %s && %s" % (remote_studydir, tar_cmd) ,\
-            #                         close_on_error=False, timeout=10)
-            # except Exception as error:
-            #     if self.remote.command_status != 0:
-            #         self.remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=10)
-            #         raise Exception(error)
-            print tar_cmd
-            sys.exit()
-            print "Downloading study..."
-            self.remote.download(compress_src, self.study_path)
-            print "Cleaning..."
-            self.remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=10)
-            print "Done."
+        compress_src = os.path.join(remote_studydir, self.study.name + ".tar.gz")
+        tar_cmd = "tar -czf %s %s" % (compress_src, compress_dirs)
+        force = True
+        print "Compressing study..."
+        try:
+            if force:
+                tar_cmd += " --ignore-failed-read"
+            remote.command("cd %s && %s" % (remote_studydir, tar_cmd) ,\
+                           close_on_error=False, timeout=10)
+        except Exception as error:
+            if remote.command_status != 0:
+                remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=10)
+                raise Exception(error)
+        print "Downloading study..."
+        remote.download(compress_src, self.study.path)
+        print "Decompressing study..."
+        tar_path = os.path.join(self.study.path, self.study.name) + ".tar.gz"
+        self._decompress(tar_path, self.study.path)
+        for case in self.study.case_selection:
+            case.status = "DOWNLOADED"
+        self.study.save()
+        print "Cleaning..."
+        remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=10)
+        print "Done."
 
+# def upload_case(self, keep_targz=False, force=False):
+    #     # self._case_clean()
+    #     workdir = os.path.join(self.remote.workdir, self.study_name)
+    #     if not self.remote.remote_dir_exists(workdir):
+    #         out = self.remote.command("mkdir %s" % workdir)
+    #     try:
+    #         self._upload(self.case_name, self.case_path, keep_targz, force, workdir)
+    #     except RemoteDirExists:
+    #         raise RemoteDirExists("Case '%s' already exists in study '%s' in the remote '%s'." % (self.case_name,self.study_name, self.remote.name))
+    #
+
+    # def _get_arrayjob_shell_cmd(path, nof, shortname=False, shell="bash", queue="pbs"):
+    #     nof = len(str(self.nof_instances))
+    #     array_idx_var = ""
+    #     if queue == "pbs":
+    #         array_idx_var = "PBS_ARRAY_INDEX"
+    #     s = ""
+    #     if shell == "bash":
+    #         if shortname:
+    #             s = '$(printf "%%0*d" %s $%s)' % (nof, array_idx_var)
+    #         else:
+    #             s = '$(printf "%%0*d" %s $%s)_$(cat cases.info| grep -e ' % (nof, array_idx_var) +\
+    #                     'grep -e "^$(printf "%%0*d" %s $%s)"  |' +\
+    #                     'sed -r "s/\(\"([^\"]+)\"\)/_\1/g" | cut -d : -f2)' % (nof, array_idx_var)
+    #     return s
+    #
 
                 
 
