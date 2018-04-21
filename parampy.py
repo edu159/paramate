@@ -297,6 +297,7 @@ class Study:
             case.reset()
             d = self.param_file.get_download_paths(case)
             # print d
+            #TODO: Remove submit.sh from case
             #TODO: Remove files for real
             # shutil.rmtree()
         self.save()
@@ -445,7 +446,7 @@ class StudyGenerator(MessagePrinter, Study):
 
     def _instance_directory_string(self, instance_id, params, nof_instances, short_name=False):
         instance_string = ""
-        nof_figures = len(str(nof_instances))
+        nof_figures = len(str(nof_instances-1))
         instance_string = "%0*d_" % (nof_figures, instance_id)
         if not short_name:
             for pname, pval in params.items():
@@ -537,8 +538,12 @@ def opts_get_remote(abs_remote_path, remote_name):
         r.load(remote_yaml_path, remote_name=remote_name)
     except IOError as error:
         sys.exit("Error: File 'remote.yaml' not found in study directory.")
-    if not r.available():
-        sys.exit("Error: Remote '%s' not reachable." % r.name)
+    try:
+        r.available()
+    except remote.ConnectionTimeout as error:
+        sys.exit("Error: " + str(error))
+    except Exception as error: 
+        sys.exit("Error: " + str(error))
     return r
 
 def connect(remote, passwd):
@@ -566,7 +571,7 @@ if __name__ == "__main__":
     # actions_group.add_argument("-d", "--download-case", metavar="case_name", help="Download case from remote.")
     actions_group.add_argument("--create", metavar="study_name", help="Create an empty study template.")
     actions_group.add_argument("--generate", nargs="?", metavar="study_name", const=".", help="Generate the instances of the study based on the 'params.yaml' file.")
-    actions_group.add_argument("--init", action="store_true", help="Get a resumed info of the study.")
+    actions_group.add_argument("--init-remote", nargs="?", metavar="remote_name", const="default", help="Get a resumed info of the study.")
     actions_group.add_argument("--qstatus", nargs="?", const="*", metavar="study_name", help="Download study from remote.")
     actions_group.add_argument("--qdelete", nargs="?", const="*", metavar="study_name", help="Download study from remote.")
     actions_group.add_argument("--qsubmit", nargs="?", const="*", metavar="study_name", help="Download study from remote.")
@@ -639,7 +644,10 @@ if __name__ == "__main__":
         study_name = os.path.basename(study_path)
         try:
             study = Study(study_name, study_path)
-            study.load()
+            try:
+                study.load()
+            except Exception:
+                sys.exit("File 'cases.info' not found. Nothing to delete.")
             print "Deleting %d cases..." % study.nof_cases
             print "Deleting file 'cases.info'..."
             study.delete()
@@ -671,6 +679,7 @@ if __name__ == "__main__":
                 r.close()
                 sys.exit("Error: " + str(error))
         r.close()
+
     elif args.download:
         study_path = os.path.abspath('.')
         study_name = os.path.basename(study_path)
@@ -681,18 +690,18 @@ if __name__ == "__main__":
         study.set_selection(cases_idx)
         cases_remote = study.get_cases(cases_idx, "id", sortby="remote")
         print "[Selected %d cases to download]" % len(cases_idx)
-        if None in cases_remote.keys():
-            print "Warning: %d selected cases has not been uploaded anywhere. Ignoring..." % len(cases_remote[None])
+        no_remote_cases = cases_remote.pop(None, None)
+        if no_remote_cases is not None:
+            print "Warning: %d selected cases has not been uploaded anywhere. Ignoring them..." % len(no_remote_cases)
         nof_remote_downloads = {}
         for remote_name, remote_cases in cases_remote.items():
-            if remote_name is not None:
-                ucases = set(study.get_cases(["UPLOADED"], "status"))
-                nof_uploaded = len(set(remote_cases).intersection(set(ucases)))  
-                dcases = set(study.get_cases(["DOWNLOADED"], "status"))
-                nof_downloaded = len(set(remote_cases).intersection(set(dcases)))  
-                print "  -'%s': %d cases (Warning: %d downloaded, %d not submitted)" % (remote_name,\
-                        len(remote_cases), nof_downloaded, nof_uploaded)
-                nof_remote_downloads.update({remote_name: len(remote_cases) - (nof_downloaded + nof_uploaded)})
+            ucases = set(study.get_cases(["UPLOADED"], "status"))
+            nof_uploaded = len(set(remote_cases).intersection(set(ucases)))  
+            dcases = set(study.get_cases(["DOWNLOADED"], "status"))
+            nof_downloaded = len(set(remote_cases).intersection(set(dcases)))  
+            print "  -'%s': %d cases (Warning: %d downloaded, %d not submitted)" % (remote_name,\
+                    len(remote_cases), nof_downloaded, nof_uploaded)
+            nof_remote_downloads.update({remote_name: len(remote_cases) - (nof_downloaded + nof_uploaded)})
         opt = raw_input("Continue?['Y','y']:")
         if opt in ['y', 'Y']:
             for remote_name, remote_cases in cases_remote.items():
@@ -708,7 +717,7 @@ if __name__ == "__main__":
                     new_selection = set(study.case_selection).intersection(remote_cases, fcases)
                     new_selection_idx = [c.id for c in new_selection]
                     study.set_selection(new_selection_idx)
-                    sm.download_study(r, force=args.force)
+                    sm.download(r, force=args.force)
                     sys.exit()
                 except Exception as error:
                     if args.debug:
@@ -729,19 +738,30 @@ if __name__ == "__main__":
         study.set_selection(cases_idx)
         cases_remote = study.get_cases(cases_idx, "id", sortby="remote")
         print "[Selected %d cases to submit]" % len(cases_idx)
-        if None in cases_remote.keys():
-            print "Warning: %d selected cases has not been uploaded yet to a remote. Ignoring..." % len(cases_remote[None])
+        no_remote_cases = cases_remote.pop(None, None)
+        if no_remote_cases is not None:
+            print "Warning: %d selected cases has not been uploaded yet to a remote. Ignoring them..." % len(no_remote_cases)
         nof_remote_submit = {}
         for remote_name, remote_cases in cases_remote.items():
-            if remote_name is not None:
-                acases = set(study.get_cases(["FINISHED", "SUBMITTED", "DOWNLOADED"], "status"))
-                nof_available = len(set(remote_cases).intersection(set(acases)))
-                print "  -'%s': %d cases (Warning: %d cases not available to submit.)" % (remote_name, len(remote_cases), nof_available)
-                nof_remote_submit.update({remote_name: len(remote_cases) - nof_available})
-        opt = raw_input("Continue?['Y','y']:")
+            acases = set(study.get_cases(["FINISHED", "SUBMITTED", "DOWNLOADED"], "status"))
+            nof_not_available = len(set(remote_cases).intersection(set(acases)))
+            if nof_not_available == len(remote_cases):
+                print "  -'%s': %d cases (Warning: No cases available to submit)" % (remote_name, len(remote_cases))
+                continue
+            elif nof_not_available == 0:
+                print "  -'%s': %d cases." % (remote_name, len(remote_cases))
+            else:
+                print "  -'%s': %d cases (Warning: %d cases not available to submit.)"\
+                      % (remote_name, len(remote_cases), nof_not_available)
+            nof_remote_submit.update({remote_name: len(remote_cases) - nof_not_available})
+        if nof_remote_submit:
+            opt = raw_input("Continue?['Y','y']:")
+        else:
+            opt = "no"
         if opt in ['y', 'Y']:
             for remote_name, remote_cases in cases_remote.items():
                 r = opts_get_remote(study_path, remote_name)
+                print remote_name
                 print "Submitting %d cases to remote '%s'..." % (nof_remote_submit[remote_name], remote_name)
                 passwd = getpass.getpass("Password(%s): " % remote_name)
                 connect(r, passwd)
@@ -752,7 +772,7 @@ if __name__ == "__main__":
                     new_selection = set(study.case_selection).intersection(remote_cases, fcases)
                     new_selection_idx = [c.id for c in new_selection]
                     study.set_selection(new_selection_idx)
-                    sm.submit(r, force=args.force)
+                    sm.submit(r, force=args.force, array_job=args.array_job)
                 except Exception as error:
                     if args.debug:
                         raise
@@ -760,6 +780,27 @@ if __name__ == "__main__":
                         r.close()
                         sys.exit("Error:" + str(error))
                 r.close()
+
+    elif args.init_remote:
+        if args.init_remote == "default":
+            remote_name = None
+        else:
+            remote_name = args.init_remote
+        study_path = os.path.abspath('.')
+        study_name = os.path.basename(study_path)
+        r = opts_get_remote(study_path, remote_name)
+        passwd = getpass.getpass("Password(%s): " % r.name)
+        connect(r, passwd)
+        try:
+            r.init_remote()
+        except Exception as error:
+            if args.debug:
+                raise
+            else:
+                r.close()
+                sys.exit("Error: " + str(error))
+        r.close()
+
 
 
 

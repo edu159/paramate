@@ -18,6 +18,13 @@ DEFAULTS_DIR = os.path.join(SRC_DIR, "defaults")
 CONFIG_DIR = os.path.join(os.getenv("HOME"), ".parampy")
 DEFAULT_DOWNLOAD_DIRS = ["output", "postproc"]
 
+
+class CmdExecutionError(Exception):
+    pass
+
+class ConnectionTimeout(Exception):
+    pass
+
 class Remote:
     def __init__(self, name="", workdir=None, addr=None,\
                  port=22, username=None, key_login=False,shell="bash"):
@@ -107,15 +114,42 @@ class Remote:
         with open('%s.yaml', 'w') as remotefile:
             yaml.dump(remotedata, remotefile, default_flow_style=False)
 
-    def available(self, timeout=5):
+    def available(self, timeout=60):
         try:
-            self.connect(passwd="", timeout=5)
+            self.connect(passwd="", timeout=timeout)
         except paramiko.AuthenticationException:
-            return True
+            pass
         except socket.timeout:
-            return False
-        except Exception:
-            return False
+            raise ConnectionTimeout("Connection time-out after 60 seconds.")
+        finally:
+            self.close()
+
+    #TODO: Check python version (>2.7.* ???)
+    def init_remote(self):
+        if not self.remote_dir_exists(self.workdir):
+            time.sleep(1)
+            self.command("mkdir -p %s" % self.workdir)
+            print "Remote workdir created."
+        else:
+            raise Exception("Directory %s already exists in remote '%s'." % (self.workdir, self.name))
+        cmd_not_available = False
+        print "Checking remote dependencies..."
+        if not self.cmd_avail("qsub"):
+            print "Warning: Command 'qsub' not available in '%s'." % self.name
+            cmd_not_available = True 
+        if not self.cmd_avail("qstat"):
+            print "Warning: Command 'qstat' not available in '%s'." % self.name
+            cmd_not_available = True 
+        if not self.cmd_avail("qdel"):
+            print "Warning: Command 'qdel' not available in '%s'." % self.name
+            cmd_not_available = True 
+        if cmd_not_available:
+            print "Info: Sometimes it is necessary to add the path where the\n" +\
+                  "      binaries qsub/qstat/qdel are located in the remote to the\n" +\
+                  "      ~/.bashrc or ~/.cshrc files."
+        else:
+            print "Done."
+
 
     def connect(self, passwd=None, timeout=None):
         if self.key_login:
@@ -125,20 +159,19 @@ class Remote:
                              password=passwd, timeout=timeout)
         self.scp = SCPClient(self.ssh.get_transport())
 
-    def command(self, cmd, timeout=None, close_on_error=True):
+    def command(self, cmd, timeout=None, fail_on_error=True):
         stdin, stdout, stderr = self.ssh.exec_command(cmd, timeout=timeout)
         self.command_status = stdout.channel.recv_exit_status()
-        error = stderr.readlines()
-        if error:
-            if close_on_error:
-                self.close()
-            raise Exception("".join([l for l in error if l]))
+        if fail_on_error:
+            if self.command_status != 0:
+                error = stderr.readlines()
+                raise CmdExecutionError("".join([l for l in error if l]))
         return stdout.readlines()
 
     def cmd_avail(self, cmd_name): 
-        output = self.command("whereis %s" % cmd_name, timeout=10)
-        result = output[0].rstrip().split(":")
-        if len(result) == 1:
+        try:
+            output = self.command("which  %s" % cmd_name, timeout=60)
+        except CmdExecutionError:
             return False
         return True
     
@@ -149,20 +182,25 @@ class Remote:
         self.scp.get(path_orig, path_dest)
 
     def remote_file_exists(self, f):
-        out = self.command("[ -f %s ]" % f)
-        return not self.command_status
+        try:
+            out = self.command("[ -f %s ]" % f)
+        except CmdExecutionError:
+            return False
+        return True
 
     def remote_dir_exists(self, d):
-        out = self.command("[ -d %s ]" % d)
-        return not self.command_status
+        try:
+            out = self.command("[ -d %s ]" % d)
+        except CmdExecutionError:
+            return False
+        return True
 
+    #TODO: Add debug flag GLOBALLY so remote can access it
     def close(self):
+        print "Closing connection..."
         if self.scp is not None:
             self.scp.close()
         self.ssh.close()
-
-    def check_connection(self):
-        pass
 
 class RemoteDirExists(Exception):
     pass
@@ -180,8 +218,9 @@ class StudyManager:
         self.quiet = quiet
      
     def _upload(self, remote, name, base_path, upload_cases, keep_targz=False, force=False):
-        workdir = remote.workdir
-        remotedir = os.path.join(workdir, name)
+        if not remote.remote_dir_exists(remote.workdir):
+            raise Exception("Remote workdir '%s' do not exists. Use '--init-remote' command to create it." % remote.workdir)
+        remotedir = os.path.join(remote.workdir, name)
         for case in upload_cases:
             remote_casedir = os.path.join(remotedir, case)
             if remote.remote_dir_exists(remote_casedir):
@@ -191,17 +230,20 @@ class StudyManager:
         upload_files = upload_cases + self.DEFAULT_UPLOAD_FILES
         tar_name = self._compress(name, base_path, upload_files)
         upload_src = os.path.join(self.tmpdir, tar_name)
-        upload_dest = workdir
+        upload_dest = remote.workdir
         remote.upload(upload_src, upload_dest)
         extract_src = os.path.join(upload_dest, tar_name)
         extract_dest = upload_dest
         try:
-            out = remote.command("tar -xzf %s --directory %s --warning=no-timestamp" % (extract_src, extract_dest), close_on_error=False)
+            print "ENTERING 1"
+            out = remote.command("tar -xzf %s --directory %s --warning=no-timestamp" % (extract_src, extract_dest))
             # For older versions of tar. Not sure how they will handle the timestamp issue though.
         except Exception as error:
-            out = remote.command("tar -xzf %s --directory %s" % (extract_src, extract_dest))
-
-        
+            print "ENTERING 2"
+            try:
+                out = remote.command("tar -xzf %s --directory %s" % (extract_src, extract_dest))
+            except Exception:
+                raise Exception("Unable to decompress '%s.tar.gz' in remote. Check version of 'tar' command in the remote." % tar_name)
         os.remove(upload_src)
         if not keep_targz:
             out = remote.command("rm -f %s" % extract_src)
@@ -235,29 +277,28 @@ class StudyManager:
         # Create submission scripts
         if os.path.exists(template_script_path):
             if array_job:
-                submit_script_path = os.path.join(self.study.path, "submit_array.sh")
+                submit_script_path = os.path.join(self.study.path, "submit_arrayjob.sh")
                 shutil.copy(template_script_path, submit_script_path)
                 remote_study_path = os.path.join(remote.workdir, self.study.name)
-                params["PARAMPY-CN"] = "$(python2 %s/manage.py case-param $PBS_ARRAY_INDEX name)" % remote_study_path
+                params["PARAMPY-CN"] = "$(python %s/manage.py case-param $PBS_ARRAY_INDEX name)" % remote_study_path
                 params["PARAMPY-CD"] = os.path.join(self.study.path, params["PARAMPY-CN"])
                 try:
                     replace_placeholders([submit_script_path], params)
                 except Exception:
                     os.remove(submit_script_path)
                     raise
-            else:
-                for case in upload_cases:
-                    case_path = os.path.join(self.study.path, case.name)
-                    submit_script_path = os.path.join(case_path, "submit.sh")
-                    shutil.copy(template_script_path, submit_script_path)
-                    params["PARAMPY-CN"] = case.name
-                    params["PARAMPY-CD"] = case_path
-                    params.update(case.params)
-                    try:
-                        replace_placeholders([submit_script_path], params)
-                    except Exception:
-                        os.remove(submit_script_path)
-                        raise
+            for case in upload_cases:
+                case_path = os.path.join(self.study.path, case.name)
+                submit_script_path = os.path.join(case_path, "submit.sh")
+                shutil.copy(template_script_path, submit_script_path)
+                params["PARAMPY-CN"] = case.name
+                params["PARAMPY-CD"] = case_path
+                params.update(case.params)
+                try:
+                    replace_placeholders([submit_script_path], params)
+                except Exception:
+                    os.remove(submit_script_path)
+                    raise
                     
         else:
             raise Exception("Submission script 'submit.%s.sh' not found in study directory." % self.remote.name)
@@ -272,7 +313,8 @@ class StudyManager:
             self.study.save()
             upload_paths = [case.name for case in upload_cases]
             if array_job:
-                upload_paths.extend("submit_arrayjob.sh")
+                upload_paths.append("submit_arrayjob.sh")
+            print "UPLOADING ", upload_paths 
             self._upload(remote, self.study.name, self.study.path, upload_paths, keep_targz, force)
         except Exception:
             self.study.study_file.restore(self.tmpdir)
@@ -290,23 +332,10 @@ class StudyManager:
         with tarfile.open(src_path, "r:gz") as tar:
             tar.extractall(dest_path)
         
-    def submit_case(self, force=False):
-        workdir = os.path.join(self.remote.workdir, self.study_name)
-        remotedir = os.path.join(workdir, self.case_name)
-        if not self.remote.remote_dir_exists(remotedir):
-            self.upload_case()
-        try:
-            time.sleep(1)
-            self._check_case(self.case_name)
-            self.remote.command("cd %s && qsub submit.sh" % remotedir)
-        except Exception as error:
-            if self.remote.command_status == 127:
-                raise Exception("Command 'qsub' not found in remote '%s'." % self.remote.name)
-
     def _cases_regexp(self):
         regexp = ""
         for case in self.study.case_selection:
-            regexp += "%0*d" % (len(str(self.study.nof_cases)), case.id)
+            regexp += "%0*d" % (len(str(self.study.nof_cases-1)), case.id)
             if not case.short_name:
                 regexp += "_"
             regexp += "*,"
@@ -315,50 +344,50 @@ class StudyManager:
         return regexp
 
 
-    def submit_study(self, force=False, array_job=False):
-        remote_studydir = os.path.join(self.remote.workdir, self.study_name)
-        if not self.remote.remote_dir_exists(remote_studydir):
+    def submit(self, remote, force=False, array_job=False):
+        remote_studydir = os.path.join(remote.workdir, self.study.name)
+        if not remote.remote_dir_exists(remote_studydir):
             error = "Study '%s' not found in remote '%s'. Upload it first.\n" % (self.study_name, self.remote.name)
             error += "NOTE: Sometimes NFS filesystems take a while to syncronise.\n" +\
                      "      If you are sure the study is uploaded, wait a bit and retry submission."
             raise Exception(error)
-        if self.study_file.is_empty():
-            raise Exception("File 'cases.info' is empty. Cannot submit case.")
+        if array_job:
+           pass
         else:
-            if array_job:
-               pass
-            for case in self.study_file.cases:
-                time.sleep(0.1)
+            nof_submitted = 0
+            for case in self.study.case_selection:
+                time.sleep(0.01)
                 try:
-                    remote_casedir = os.path.join(remote_studydir, case["name"])
-                    if not self.remote.cmd_avail("qsub"):
-                        raise Exception("Command 'qsub' not found in remote '%s'." % self.remote.name)
+                    remote_casedir = os.path.join(remote_studydir, case.name)
+                    if not remote.cmd_avail("qsub"):
+                        raise Exception("Command 'qsub' not available in remote '%s'." % remote.name)
                     awk = "awk 'match($0,/[0-9]+/){print substr($0, RSTART, RLENGTH)}'"
-                    output = self.remote.command("cd %s && qsub submit.sh | %s" % (remote_casedir, awk), timeout=10)
-                    case["jid"] = output[0].rstrip() 
-                    case["status"] = "SUBMITTED"
-                    case["sub_date"] = time.strftime("%c")
-                    print "Submitted case '%s' with job id '%s'." % (case["name"], case["jid"])
+                    output = remote.command("cd %s && qsub submit.sh | %s" % (remote_casedir, awk), timeout=10)
+                    case.job_id = output[0].rstrip() 
+                    case.status = "SUBMITTED"
+                    case.submission_date = time.strftime("%c")
+                    nof_submitted += 1
+                    print "Submitted case '%s' (%d/%d)." % (case.name, nof_submitted, len(self.study.case_selection))
                 except Exception:
-                    raise
-                finally:
                     # Save if some jobs has been submitted before the error
-                    self.study_file.write()
-        print "Submitted %d cases." % len(self.study_file.cases)
+                    self.study.save()
+                    raise
 
+            self.study.save()
 
     def update_status(self, remote):
         if not remote.cmd_avail("qstat"):
             raise Exception("Command 'qstat' not available in remote '%s'." % self.remote.name)
         awk = "awk 'match($0,/[0-9]+/){print substr($0, RSTART, RLENGTH)}'"
-        output = remote.command("qstat | %s" % awk, timeout=10)
+        output = remote.command("qstat | %s" % awk, timeout=60)
         job_ids  = [jid.rstrip() for jid in output]
         for case in self.study.case_selection:
             if not (case.id in job_ids) and case.status == "SUBMITTED":
                 case.status = "FINISHED"
         self.study.save()
 
-    def download_study(self, remote, force=False):
+
+    def download(self, remote, force=False):
         remote_studydir = os.path.join(remote.workdir, self.study.name)
         if not remote.remote_dir_exists(remote_studydir):
             raise Exception("Study '%s' does not exists in remote '%s'." % (self.study_name, self.remote.name))
@@ -389,16 +418,17 @@ class StudyManager:
 
         compress_src = os.path.join(remote_studydir, self.study.name + ".tar.gz")
         tar_cmd = "tar -czf %s %s" % (compress_src, compress_dirs)
+        #TODO: REMOVE THIS
         force = True
         print "Compressing study..."
         try:
             if force:
                 tar_cmd += " --ignore-failed-read"
             remote.command("cd %s && %s" % (remote_studydir, tar_cmd) ,\
-                           close_on_error=False, timeout=10)
+                           fail_on_error=False, timeout=60)
         except Exception as error:
             if remote.command_status != 0:
-                remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=10)
+                remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=60)
                 raise Exception(error)
         print "Downloading study..."
         remote.download(compress_src, self.study.path)
@@ -409,39 +439,5 @@ class StudyManager:
             case.status = "DOWNLOADED"
         self.study.save()
         print "Cleaning..."
-        remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=10)
+        remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=60)
         print "Done."
-
-# def upload_case(self, keep_targz=False, force=False):
-    #     # self._case_clean()
-    #     workdir = os.path.join(self.remote.workdir, self.study_name)
-    #     if not self.remote.remote_dir_exists(workdir):
-    #         out = self.remote.command("mkdir %s" % workdir)
-    #     try:
-    #         self._upload(self.case_name, self.case_path, keep_targz, force, workdir)
-    #     except RemoteDirExists:
-    #         raise RemoteDirExists("Case '%s' already exists in study '%s' in the remote '%s'." % (self.case_name,self.study_name, self.remote.name))
-    #
-
-    # def _get_arrayjob_shell_cmd(path, nof, shortname=False, shell="bash", queue="pbs"):
-    #     nof = len(str(self.nof_instances))
-    #     array_idx_var = ""
-    #     if queue == "pbs":
-    #         array_idx_var = "PBS_ARRAY_INDEX"
-    #     s = ""
-    #     if shell == "bash":
-    #         if shortname:
-    #             s = '$(printf "%%0*d" %s $%s)' % (nof, array_idx_var)
-    #         else:
-    #             s = '$(printf "%%0*d" %s $%s)_$(cat cases.info| grep -e ' % (nof, array_idx_var) +\
-    #                     'grep -e "^$(printf "%%0*d" %s $%s)"  |' +\
-    #                     'sed -r "s/\(\"([^\"]+)\"\)/_\1/g" | cut -d : -f2)' % (nof, array_idx_var)
-    #     return s
-    #
-
-                
-
-
-
-if __name__ == "__main__":
-    pass
