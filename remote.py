@@ -157,7 +157,7 @@ class Remote:
         else:
             self.ssh.connect(self.addr, port=self.port, username=self.username,\
                              password=passwd, timeout=timeout)
-        self.scp = SCPClient(self.ssh.get_transport())
+        self.scp = SCPClient(self.ssh.get_transport(), socket_timeout=60.0)
 
     def command(self, cmd, timeout=None, fail_on_error=True):
         stdin, stdout, stderr = self.ssh.exec_command(cmd, timeout=timeout)
@@ -197,7 +197,6 @@ class Remote:
 
     #TODO: Add debug flag GLOBALLY so remote can access it
     def close(self):
-        print "Closing connection..."
         if self.scp is not None:
             self.scp.close()
         self.ssh.close()
@@ -228,25 +227,28 @@ class StudyManager:
                     raise RemoteDirExists("Study '%s' - Case directory '%s' already exists in remote '%s'."\
                                           % (self.study.name, case, remote.name))
         upload_files = upload_cases + self.DEFAULT_UPLOAD_FILES
+        print "Compressing study..."
         tar_name = self._compress(name, base_path, upload_files)
         upload_src = os.path.join(self.tmpdir, tar_name)
         upload_dest = remote.workdir
+        print "Uploading study..."
         remote.upload(upload_src, upload_dest)
         extract_src = os.path.join(upload_dest, tar_name)
         extract_dest = upload_dest
+        print "Extracting study in remote..."
         try:
-            print "ENTERING 1"
             out = remote.command("tar -xzf %s --directory %s --warning=no-timestamp" % (extract_src, extract_dest))
             # For older versions of tar. Not sure how they will handle the timestamp issue though.
         except Exception as error:
-            print "ENTERING 2"
             try:
                 out = remote.command("tar -xzf %s --directory %s" % (extract_src, extract_dest))
             except Exception:
                 raise Exception("Unable to decompress '%s.tar.gz' in remote. Check version of 'tar' command in the remote." % tar_name)
+        print "Cleaning..."
         os.remove(upload_src)
         if not keep_targz:
             out = remote.command("rm -f %s" % extract_src)
+        print "Done."
 
     
     def upload(self, remote, array_job=False, keep_targz=False, force=False):
@@ -314,7 +316,6 @@ class StudyManager:
             upload_paths = [case.name for case in upload_cases]
             if array_job:
                 upload_paths.append("submit_arrayjob.sh")
-            print "UPLOADING ", upload_paths 
             self._upload(remote, self.study.name, self.study.path, upload_paths, keep_targz, force)
         except Exception:
             self.study.study_file.restore(self.tmpdir)

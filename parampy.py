@@ -138,17 +138,20 @@ class ParamFile:
                 except Exception as err:
                     pass
                 for param_name, param_fields in section_opts.items():
-                    if str(param_fields["value"]).startswith("gen:"):
-                        gen_name = param_fields["value"].split(":")[1]
-                        try:
-                            param_fields["value"] = getattr(generators, gen_name)()
-                        except AttributeError as error:
-                            raise Exception("Generator '%s' not found in 'generators.py'.")
-                        except Exception as error:
-                            raise Exception("Error in 'genenerators.py - '" + str(error))
-                        if type(param_fields["value"]) is not list:
-                            raise Exception("Generators must return a list of values. Got '%s'."\
-                                            % type(param_fields["value"]))
+                    if isinstance(param_fields, dict):
+                        if str(param_fields["value"]).startswith("gen:"):
+                            gen_name = param_fields["value"].split(":")[1]
+                            try:
+                                param_fields["value"] = getattr(generators, gen_name)()
+                            except AttributeError as error:
+                                raise Exception("Generator '%s' not found in 'generators.py'.")
+                            except Exception as error:
+                                raise Exception("Error in 'genenerators.py - '" + str(error))
+                            if type(param_fields["value"]) is not list:
+                                raise Exception("Generators must return a list of values. Got '%s'."\
+                                                % type(param_fields["value"]))
+                    else:
+                        section_opts[param_name] = {"value": [param_fields], "mode": "linear"} 
                 # Remove the path 
                 del sys.path[0]
 
