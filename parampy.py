@@ -72,7 +72,7 @@ def replace_placeholders(file_paths, params):
                     try:
                         lines[ln] = lines[ln].replace("$[" + opt + "]", str(params[opt]))
                     except KeyError as error:
-                        raise Exception("Parameter '%s' not present." % opt)
+                        raise Exception("Parameter '%s' not defined in 'params.yaml' (Found in '%s')." % (opt, os.path.basename(path)))
             with open(path, 'w+') as replaced_file:
                 replaced_file.writelines(lines)
         except Exception as error:
@@ -139,18 +139,27 @@ class ParamFile:
                     pass
                 for param_name, param_fields in section_opts.items():
                     if isinstance(param_fields, dict):
-                        if str(param_fields["value"]).startswith("gen:"):
+                        if str(param_fields["value"]).startswith("g:"):
                             gen_name = param_fields["value"].split(":")[1]
                             try:
                                 param_fields["value"] = getattr(generators, gen_name)()
                             except AttributeError as error:
                                 raise Exception("Generator '%s' not found in 'generators.py'.")
                             except Exception as error:
-                                raise Exception("Error in 'genenerators.py - '" + str(error))
+                                raise Exception("Error in 'genenerators.py(%s)' - %s" %  (param_name, str(error)))
                             if type(param_fields["value"]) is not list:
                                 raise Exception("Generators must return a list of values. Got '%s'."\
                                                 % type(param_fields["value"]))
                     else:
+                        #NOTE: This could be refactored, common code here
+                        if str(param_fields).startswith("g:"):
+                            gen_name = param_fields.split(":")[1]
+                            try:
+                                param_fields = getattr(generators, gen_name)
+                            except AttributeError as error:
+                                raise Exception("Generator '%s' not found in 'generators.py'.")
+                            except Exception as error:
+                                raise Exception("Error in 'genenerators.py - '" + str(error))
                         section_opts[param_name] = {"value": [param_fields], "mode": "linear"} 
                 # Remove the path 
                 del sys.path[0]
@@ -458,6 +467,15 @@ class StudyGenerator(MessagePrinter, Study):
         return instance_string
 
 
+    def _call_generators(self, instance):
+        for pname, pval in instance.items():
+            if callable(pval):
+                try:
+                    instance[pname] = pval(instance)
+                except Exception as error:
+                    raise Exception("Error in 'genenerators.py(%s)' - %s" %  (pname, str(error)))
+
+        return instance
 
     #TODO: Decouple state and behaviour of instances into a new class
     def generate_cases(self):
@@ -478,6 +496,7 @@ class StudyGenerator(MessagePrinter, Study):
                 raise Exception("No 'build.sh' script found but '--build-once' option was specified.")
         nof_instances = len(self.instances)
         for instance_id, instance in enumerate(self.instances):
+            instance = self._call_generators(instance)
             multival_params = self._get_multival_params(instance)
             instance_name = self._instance_directory_string(instance_id, multival_params,
                                                       nof_instances, self.short_name)
@@ -518,7 +537,6 @@ class StudyGenerator(MessagePrinter, Study):
 
     @classmethod 
     def create_study(cls, path, study_name):
-        print path, study_name
         study_path = os.path.join(path, study_name)
         study_template_path = os.path.join(study_path, "template")
         if os.path.exists(study_path):
