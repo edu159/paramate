@@ -354,12 +354,13 @@ class StudyGenerator(MessagePrinter, Study):
     DEFAULT_FILES = ["template/exec.sh", "template/build.sh", "README", "params.yaml", 
                      "generators.py"] 
     def __init__(self, study, short_name=False, build_once=False,
-                 quiet=False, verbose=False):
+                 quiet=False, verbose=False, keep_onerror=False):
         super(StudyGenerator, self).__init__(quiet, verbose)
         #TODO: Check if the study case directory is empty and in good condition
         self.study = study
         self.short_name = short_name
         self.build_once = build_once
+        self.keep_onerror = keep_onerror
         self.params = self.study.param_file["PARAMETERS"]
         #Include build.sh to files to replace placeholders
         self.study.param_file["FILES"].append({"path": ".", "files": ["build.sh"]})
@@ -452,7 +453,8 @@ class StudyGenerator(MessagePrinter, Study):
                 self.execute_build_script(build_script_path)
                 self.print_msg("Done", verbose=True)
         except Exception as error:
-            shutil.rmtree(casedir)
+            if not self.keep_onerror:
+                shutil.rmtree(casedir)
             raise error
         return instance_name
 
@@ -607,6 +609,7 @@ if __name__ == "__main__":
     parser.add_argument("--array-job", action="store_true", default=False, help="Submit the study as a array of jobs.")
     parser.add_argument("--remote", nargs="?", const=None, metavar="remote_name", help="Specify remote for an action.")
     parser.add_argument("--force", action="store_true", default=False, help="Specify remote for an action.")
+    parser.add_argument("--keep-on-error", action="store_true", default=False, help="Keep files in case of an error during generation.")
     parser.add_argument("--build-once", action="store_true", default=False, help="Study instances are short named.")
     parser.add_argument("--debug", action="store_true", default=False, help="Debug mode.")
     args = parser.parse_args()
@@ -634,7 +637,7 @@ if __name__ == "__main__":
             sb  =  StudyGenerator(study, short_name=args.shortname,
                                   build_once=args.build_once,
                                   quiet=args.quiet,
-                                  verbose=args.verbose)
+                                  verbose=args.verbose, keep_onerror=args.keep_on_error)
             sb.generate_cases()
         except Exception as error:
             if args.debug:
