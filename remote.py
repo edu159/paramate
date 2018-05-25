@@ -9,7 +9,7 @@ import getpass
 import tarfile
 from scp import SCPClient
 import socket
-from parampy import InfoFile, ParamFile, replace_placeholders
+from common import replace_placeholders
 
 
 #TODO: Refactor Remote to separate configuration-related stuff

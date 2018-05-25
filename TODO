@@ -2,3 +2,4 @@
 2) Check that the study-name in the paramp.yaml is the same as the folder name of the study
 3) Add --copy to ignore downloaded files and copy study.
 4) Handle CTRL+C
+5) Add JOB_STATE file to cases to handle restarts. The jobid will change when resubmitting.
