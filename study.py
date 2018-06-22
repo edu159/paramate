@@ -70,6 +70,25 @@ class Study:
                         match_list[case[sortby]].append(case)
         return match_list
 
+    def get_cases_byparams(self, params, mode="all"):
+        assert mode == "all" or mode == "one"
+        match_list = []
+        for case in self.cases:
+            case_match = False
+            if mode == "all":
+                case_match = True
+            for param, value in params.items():
+                if mode == "all":
+                    if case["params"][param] != value:
+                        case_match = False
+                        break
+                elif mode == "one":
+                    if case["params"][param] == value:
+                        case_match = True 
+                        break
+            if case_match:
+                match_list.append(case)
+        return match_list
 
     def load(self):
         self.cases = self.study_file.load()

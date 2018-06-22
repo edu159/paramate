@@ -109,7 +109,7 @@ class ParamFile:
                             try:
                                 param_fields["value"] = getattr(generators, gen_name)()
                             except AttributeError as error:
-                                raise Exception("Generator '%s' not found in 'generators.py'.")
+                                raise Exception("Generator '%s' not found in 'generators.py'." % gen_name)
                             except Exception as error:
                                 raise Exception("Error in 'genenerators.py(%s)' - %s" %  (param_name, str(error)))
                             if type(param_fields["value"]) is not list:
@@ -122,7 +122,7 @@ class ParamFile:
                             try:
                                 param_fields = getattr(generators, gen_name)
                             except AttributeError as error:
-                                raise Exception("Generator '%s' not found in 'generators.py'.")
+                                raise Exception("Generator '%s' not found in 'generators.py'." % gen_name)
                             except Exception as error:
                                 raise Exception("Error in 'genenerators.py - '" + str(error))
                         section_opts[param_name] = {"value": [param_fields], "mode": "linear"} 
@@ -144,7 +144,6 @@ class ParamFile:
                         path_list.append(os.path.join(current_path, f))
                 except KeyError:
                     try:
-                        import glob
                         exclude = [os.path.join(current_path, p)  for p in path["exclude"]]
                         all_files = glob.glob(os.path.join(current_path, "*"))
                         # print all_files, exclude

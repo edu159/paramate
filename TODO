@@ -3,3 +3,4 @@
 3) Add --copy to ignore downloaded files and copy study.
 4) Handle CTRL+C
 5) Add JOB_STATE file to cases to handle restarts. The jobid will change when resubmitting.
+6) Ask for confirmation while deleting.
