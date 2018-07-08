@@ -152,6 +152,7 @@ class Remote:
 
 
     def connect(self, passwd=None, timeout=None):
+        self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         if self.key_login:
             self.ssh.connect(self.addr, port=self.port, timeout=timeout)
         else:

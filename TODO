@@ -4,3 +4,4 @@
 4) Handle CTRL+C
 5) Add JOB_STATE file to cases to handle restarts. The jobid will change when resubmitting.
 6) Ask for confirmation while deleting.
+7) Add single value paramas at upload time to fill submit.sh scripts. 

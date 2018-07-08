@@ -122,8 +122,11 @@ class StudyGenerator(MessagePrinter, Study):
             raise Exception("Error while running 'build.sh' script.")
         finally:
             os.chdir(cwd)
-            with open("build.log", "w") as log:
+            with open("build.log", "a+") as log:
+                case = os.path.basename(os.path.dirname(build_script_path))
+                log.write(case + ':\n')
                 log.writelines(output)
+                log.write('\n')
 
     # def _compute_nof_instances(self):
     #     nof_instances = 1
@@ -299,7 +302,9 @@ def opts_get_remote(abs_remote_path, remote_name):
     except IOError as error:
         sys.exit("Error: File 'remote.yaml' not found in study directory.")
     try:
+        print "HOLA AVAILABLE"
         r.available()
+        print "HOLA AVAILABLESALIO"
     except remote.ConnectionTimeout as error:
         sys.exit("Error: " + str(error))
     except Exception as error: 
@@ -368,7 +373,6 @@ if __name__ == "__main__":
     elif args.generate:
         study_path = os.path.abspath('.')
         study_name = os.path.basename(study_path)
-        print study_path, study_name
         try:
             study = Study(study_name, study_path)
             sb  =  StudyGenerator(study, short_name=args.shortname,
@@ -410,7 +414,7 @@ if __name__ == "__main__":
             except Exception:
                 sys.exit("File 'cases.info' not found. Nothing to delete.")
             print "Deleting %d cases..." % study.nof_cases
-            print "Deleting file 'cases.info'..."
+            print "Deleting study files..."
             study.delete()
             print "Done."
         except Exception as error:

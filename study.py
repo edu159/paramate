@@ -117,7 +117,10 @@ class Study:
                 shutil.rmtree(os.path.join(self.path, case["name"]))
             except Exception as error:
                 pass
+        
         self.study_file.remove()
+        os.remove(os.path.join(self.path, "build.log"))
+        os.remove(os.path.join(self.path, "generators.pyc"))
 
     def add_case(self, case_name, params, short_name=False):
         case = Case(self.nof_cases, params.copy(), case_name, short_name)
