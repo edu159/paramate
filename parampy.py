@@ -10,6 +10,7 @@ import sys
 import remote
 import getpass
 import subprocess
+import progressbar
 import json
 from common import replace_placeholders
 from study import Study, Case
@@ -302,18 +303,51 @@ def opts_get_remote(abs_remote_path, remote_name):
     except IOError as error:
         sys.exit("Error: File 'remote.yaml' not found in study directory.")
     try:
-        print "HOLA AVAILABLE"
         r.available()
-        print "HOLA AVAILABLESALIO"
     except remote.ConnectionTimeout as error:
         sys.exit("Error: " + str(error))
     except Exception as error: 
         sys.exit("Error: " + str(error))
     return r
 
-def connect(remote, passwd):
+class ProgressBar:
+    def __init__(self):
+        self.max_bar_value = 1000
+        self.reset()
+        self.widgets = [
+            ' [', progressbar.Timer(), '] ',
+            progressbar.Bar(),
+            ' (', progressbar.ETA(), ') ',
+            ' (', progressbar.FileTransferSpeed(), ') ']
+
+    def callback(self, filename, size, sent):
+        # Initialize
+        if self.prev_time == 0.0:
+            self.prev_time = time.time()
+            self.max_bar_value = size
+            self.bar = progressbar.ProgressBar(max_value=size, widgets=self.widgets)
+
+        if time.time() - self.prev_time > 1.0:
+            chunk_size = size / self.max_bar_value
+            self.bar.update(sent/chunk_size)
+            self.prev_sent = sent
+            self.prev_time = time.time()
+        elif sent == size:
+            self.bar.update(self.max_bar_value)
+
+    def reset(self):
+        self.prev_sent = 0
+        self.prev_time = 0.0
+        self.bar = None
+
+
+def connect(remote, passwd, show_progress_bar=False):
     try:
-        remote.connect(passwd)
+        if show_progress_bar:
+            progress_bar = ProgressBar()
+            remote.connect(passwd, progress_callback=progress_bar.callback)
+        else:
+            remote.connect(passwd)
     except Exception as error:
         if args.debug:
             raise
@@ -331,9 +365,6 @@ if __name__ == "__main__":
     group.add_argument("-q", "--quiet", action="store_true", default=False)
     actions_group = parser.add_mutually_exclusive_group()
     # actions_group.add_argument("--check", action="store_true", help="Check if the study is consistent with 'params.yaml' file.")
-    # actions_group.add_argument("-u", "--upload-case", metavar="case_name", help="Upload case to remote.")
-    # actions_group.add_argument("-s", "--submit-case", metavar="case_name", help="Submit case to execution.")
-    # actions_group.add_argument("-d", "--download-case", metavar="case_name", help="Download case from remote.")
     actions_group.add_argument("--create", metavar="study_name", help="Create an empty study template.")
     actions_group.add_argument("--generate", nargs="?", metavar="study_name", const=".", help="Generate the instances of the study based on the 'params.yaml' file.")
     actions_group.add_argument("--init-remote", nargs="?", metavar="remote_name", const="default", help="Get a resumed info of the study.")
@@ -344,7 +375,6 @@ if __name__ == "__main__":
     actions_group.add_argument("--clean", nargs="?", metavar="cases_list", const='*', help="Clean the instances of a study.")
     actions_group.add_argument("--delete", action="store_true", help="Delete all the instances of a study.")
     actions_group.add_argument("--upload", nargs="?", const="*", metavar="study_name", help="Upload study to remote.")
-    actions_group.add_argument("--submit", nargs="?", const="*", metavar="study_name", help="Submit case to execution.")
     actions_group.add_argument("--download", nargs="?", const="*", metavar="study_name", help="Download study from remote.")
     parser.add_argument("--shortname", action="store_true", default=False, help="Study instances are short named.")
     # parser.add_argument("--cases", default='*', metavar="case_indices", nargs="?", const="*", help="Case selector.")
@@ -355,8 +385,6 @@ if __name__ == "__main__":
     parser.add_argument("--build-once", action="store_true", default=False, help="Study instances are short named.")
     parser.add_argument("--debug", action="store_true", default=False, help="Debug mode.")
     args = parser.parse_args()
-
-
 
     if args.create:
         study_name = os.path.basename('.')
@@ -428,7 +456,7 @@ if __name__ == "__main__":
         study_name = os.path.basename(study_path)
         r = opts_get_remote(study_path, args.remote)
         passwd = getpass.getpass("Password(%s): " % r.name)
-        connect(r, passwd)
+        connect(r, passwd, show_progress_bar=True)
         study = Study(study_name, study_path)
         study.load()
         case_selector = args.upload
@@ -473,7 +501,7 @@ if __name__ == "__main__":
                 r = opts_get_remote(study_path, remote_name)
                 print "Downloading %d cases from remote '%s'..." % (nof_remote_downloads[remote_name], remote_name)
                 passwd = getpass.getpass("Password(%s): " % remote_name)
-                connect(r, passwd)
+                connect(r, passwd, show_progress_bar=True)
                 sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
                 try:
                     sm.update_status(r)

@@ -27,7 +27,7 @@ class ConnectionTimeout(Exception):
 
 class Remote:
     def __init__(self, name="", workdir=None, addr=None,\
-                 port=22, username=None, key_login=False,shell="bash"):
+            port=22, username=None, key_login=False,shell="bash"):
         self.name = name
         self.remote_yaml = None
         self.key_login = key_login
@@ -151,14 +151,14 @@ class Remote:
             print "Done."
 
 
-    def connect(self, passwd=None, timeout=None):
+    def connect(self, passwd=None, timeout=None, progress_callback=None):
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         if self.key_login:
             self.ssh.connect(self.addr, port=self.port, timeout=timeout)
         else:
             self.ssh.connect(self.addr, port=self.port, username=self.username,\
                              password=passwd, timeout=timeout)
-        self.scp = SCPClient(self.ssh.get_transport(), socket_timeout=60.0)
+        self.scp = SCPClient(self.ssh.get_transport(), socket_timeout=60.0, progress=progress_callback)
 
     def command(self, cmd, timeout=None, fail_on_error=True):
         stdin, stdout, stderr = self.ssh.exec_command(cmd, timeout=timeout)
