@@ -10,3 +10,5 @@
 9) Add progress bar in uploads/downloads
 10) Better command line options groups
 11) Select files to be uploaded only once and reference with a variable
+12) --create option need to be updated
+13) Check integrity of cases.info (Creation date is not in future, remote valid, Status type valid)

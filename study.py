@@ -7,12 +7,14 @@ import itertools
 
 
 class Study:
-    def __init__(self, name, path):
+    #TODO: Look into better loading of parameter and info files.
+    def __init__(self, name, path, load_param_file=True):
         self.path = path
         self.name = name
         self.study_file = InfoFile(path=path) 
         self.param_file = ParamFile(path=path)
-        self.param_file.load()
+        if load_param_file:
+            self.param_file.load()
         self.cases = []
         self.case_selection = []
         self.nof_cases = 0
@@ -58,7 +60,7 @@ class Study:
             match_list = []
         else:
             match_list = {}
-        for case in self.cases:
+        for case in self.case_selection:
             if case[field] in search_vals:
                 if sortby == None:
                     match_list.append(case)
@@ -73,7 +75,7 @@ class Study:
     def get_cases_byparams(self, params, mode="all"):
         assert mode == "all" or mode == "one"
         match_list = []
-        for case in self.cases:
+        for case in self.case_selection:
             case_match = False
             if mode == "all":
                 case_match = True
