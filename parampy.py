@@ -13,6 +13,7 @@ import getpass
 import subprocess
 import json
 import anytree
+from anytree.importer import DictImporter
 from common import replace_placeholders, MessagePrinter, ProgressBar
 from study import Study, Case
 
@@ -78,15 +79,15 @@ class StudyGenerator(MessagePrinter, Study):
         self.short_name = short_name
         self.build_once = build_once
         self.keep_onerror = keep_onerror
-        self.params = self.study.param_file["PARAMETERS"]
+        self.params = self.study.param_file["PARAMETERS-DEFAULT"]
         #Include build.sh to files to replace placeholders
         self.study.param_file["FILES"].append({"path": ".", "files": ["build.sh"]})
-        self.linear_param_size = 0
-        self.linear_param_list = self._get_params_by_mode("linear")
-        self.combinatoric_param_list = self._get_params_by_mode("combinatoric")
-        linear_multival_param_list = self._check_linear_params()
-        self.multival_param_list = linear_multival_param_list + self.combinatoric_param_list
-        self.multival_keys = [d["name"] for d in self.multival_param_list] 
+        # self.linear_param_size = 0
+        # self.linear_param_list = self._get_params_by_mode("linear")
+        # self.combinatoric_param_list = self._get_params_by_mode("combinatoric")
+        # linear_multival_param_list = self._check_linear_params()
+        self.root = DictImporter().import_(self.study.param_file["PARAMETERS-TREE"])
+        # self.multival_keys = [node.name  for node in anytree.PreOrderIter(self.root, filter_=lambda n: n.name != "default")]
         self.template_path = os.path.join(self.study.path, "template")
         self.build_script_path = os.path.join(self.template_path, "build.sh")
         self.instances = []
@@ -118,28 +119,28 @@ class StudyGenerator(MessagePrinter, Study):
     #     
     
 
-    def _get_params_by_mode(self,  mode):
-        params_out = []
-        for k, v in self.params.items():
-            if v["mode"] == mode:
-                param = v.copy()
-                param["name"] = k
-                params_out.append(param)
-        return params_out
+    # def _get_params_by_mode(self,  mode):
+    #     params_out = []
+    #     for k, v in self.params.items():
+    #         if v["mode"] == mode:
+    #             param = v.copy()
+    #             param["name"] = k
+    #             params_out.append(param)
+    #     return params_out
 
            
-    def _check_linear_params(self):
-        max_param_size = max([len(p["value"]) for p in self.linear_param_list])
-        multivalued_params = []
-        for p in self.linear_param_list:
-            if len(p["value"]) == 1:
-                p["value"] = p["value"] * max_param_size
-            elif len(p["value"]) == max_param_size:
-                multivalued_params.append(p)
-            elif len(p["value"]) != max_param_size:
-                raise Exception("Error: All linear params lists must be same size or one.")
-        self.linear_param_size = max_param_size
-        return multivalued_params
+    # def _check_linear_params(self):
+    #     max_param_size = max([len(p["value"]) for p in self.linear_param_list])
+    #     multivalued_params = []
+    #     for p in self.linear_param_list:
+    #         if len(p["value"]) == 1:
+    #             p["value"] = p["value"] * max_param_size
+    #         elif len(p["value"]) == max_param_size:
+    #             multivalued_params.append(p)
+    #         elif len(p["value"]) != max_param_size:
+    #             raise Exception("Error: All linear params lists must be same size or one.")
+    #     self.linear_param_size = max_param_size
+    #     return multivalued_params
 
 
       #TODO: Create a file with instance information
@@ -231,25 +232,31 @@ class StudyGenerator(MessagePrinter, Study):
     def _generate_param_combinations(self):
         instance = {}
         self.instances = []
-        for _ in xrange(self.linear_param_size):
-            for lp in self.linear_param_list:
-                param = {lp["name"]: lp["value"][_]}
-                instance.update(param)
-            self._gen_comb_instance(instance, self.combinatoric_param_list)
-            instance = {}
+        self._gen_comb_instances(instance, self.root)
 
-    def _gen_comb_instance(self, instance, params):
-        if params:
-            pname = params[0]["name"]
-            for pval in params[0]["value"]:
-                param = {pname: pval}
-                instance_copy = instance.copy()
-                instance_copy.update(param)
-                self._gen_comb_instance(instance_copy, params[1:])
+    def _gen_comb_instances(self, instance, node, val_idx=0, defaults={}):
+        try:
+            defaults_node = node.defaults
+        except:
+            defaults_node = {}
+        if node.children:
+            for child in node.children:
+                if node.parent is None or node.mode == "*":
+                    for val_idx, val in enumerate(node.values):
+                        instance[node.name] = val
+                        defaults.update(defaults_node)
+                        self._gen_comb_instances(instance, child, val_idx, defaults)
+                elif node.mode == "+":
+                    instance[node.name] = node.value[val_idx]
+                    instance.update(self.params)
+                    self._gen_comb_instances(instance, child, defaults=defaults)
+                self.multival_keys = ["pressure", "temperature", "wallvel-md", "wallvel-cfd", "ncy-cfd"]
         else:
+            # print(instance)
+            instance.update(self.params)
+            instance.update(defaults)
             self.instances.append(instance)
-            # multival_params = self._get_multival_params(instance)
-            # self.study.study_file.add_case(multival_params, short_name=self.short_name)
+
     
 
 
@@ -346,15 +353,16 @@ def delete_action(args):
             study.load()
         except Exception:
             sys.exit("File 'cases.info' not found. Nothing to delete.")
-        print "Deleting %d cases..." % study.nof_cases
-        print "Deleting study files..."
+        _printer.print_msg("Deleting %d cases..." % study.nof_cases, "info")
+        _printer.print_msg("Deleting study files...", "info")
         study.delete()
-        print "Done."
+        _printer.print_msg("Done.", "info")
     except Exception as error:
         if args.debug:
             raise
         else:
-            sys.exit("Error: " + str(error))
+            _printer.print_msg("Error: " + str(error), "error")
+            sys.exit()
 
 def init_remote_action(args):
     remote_name = args.remote
@@ -370,7 +378,8 @@ def init_remote_action(args):
             raise
         else:
             r.close()
-            sys.exit("Error: " + str(error))
+            _printer.print_msg("Error: " + str(error), "error")
+            sys.exit()
     r.close()
 
 def clean_action(args):
@@ -593,7 +602,7 @@ if __name__ == "__main__":
     parser_generate.set_defaults(func=generate_action)
     parser_generate.add_argument("--shortname", action="store_true", default=False, help="Study instances are short named.")
     parser_generate.add_argument("--keep-on-error", action="store_true", default=False, help="Keep files in case of an error during generation.")
-    parser_generate.add_argument("--build-once", action="store_true", default=False, help="Study instances are short named.")
+    parser_generate.add_argument("--build-once", action="store_true", default=False, help="Execute only once the build script.")
 
     # Parser delete 
     parser_delete = subparsers.add_parser('delete', help="Delete all instances in a study.")

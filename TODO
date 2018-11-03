@@ -3,12 +3,19 @@
 3) Add --copy to ignore downloaded files and copy study.
 4) Handle CTRL+C
 5) Add JOB_STATE file to cases to handle restarts. The jobid will change when resubmitting.
-
 6) Ask for confirmation while deleting.
 7) Add single value paramas at upload time to fill submit.sh scripts. 
 8) Add md5 HASH to uploads and downloads
-9) Add progress bar in uploads/downloads
-10) Better command line options groups
 11) Select files to be uploaded only once and reference with a variable
 12) --create option need to be updated
 13) Check integrity of cases.info (Creation date is not in future, remote valid, Status type valid)
+15) Add ssh keys
+16) Make it work with ssh_config
+17) Allow expand values after generating case
+18) Allow defining qstat, qsub, qstat custom commands
+19) Allow working locally
+20) Print param tree
+21) Finish qdel, qstat
+
+LONG TERM:
+- Testing framework

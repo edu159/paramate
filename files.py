@@ -51,7 +51,9 @@ class InfoFile:
 
 class StudySection:
     pass
-class ParamsSection:
+class ParamsDefaultSection:
+    pass
+class ParamsTreeSection:
     pass
 class FilesSection:
     pass
@@ -62,7 +64,8 @@ class DownloadSection:
 class ParamFile:
     def __init__(self, path='.', allowed_sections=None, fname='params.yaml'):
         self.ALLOWED_SECTIONS = {"STUDY": StudySection, 
-                                 "PARAMETERS": ParamsSection,
+                                 "PARAMETERS-DEFAULT": ParamsDefaultSection,
+                                 "PARAMETERS-TREE": ParamsTreeSection,
                                  "DOWNLOAD": DownloadSection,
                                  "FILES": FilesSection}
         self.study_path = os.path.abspath(path)
@@ -95,7 +98,7 @@ class ParamFile:
                 # raise Exception("Error: Section '%s' is mandatory in 'params.yaml'." % section_name)
 
             #TODO: Rework this and check for correct format of params.yaml. Add this into ParamSection
-            if section_name == "PARAMETERS":
+            if section_name == "PARAMETERS-DEFAULT":
                 try:
                     # Insert study path to load generators
                     sys.path.insert(0, self.study_path)
@@ -125,7 +128,7 @@ class ParamFile:
                                 raise Exception("Generator '%s' not found in 'generators.py'." % gen_name)
                             except Exception as error:
                                 raise Exception("Error in 'genenerators.py - '" + str(error))
-                        section_opts[param_name] = {"value": [param_fields], "mode": "linear"} 
+                        section_opts[param_name] = param_fields
                 # Remove the path 
                 del sys.path[0]
 
