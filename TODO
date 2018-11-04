@@ -1,6 +1,6 @@
 1) Fix --clean option by erasing files in the cases.txt and cases.txt itself.
 2) Check that the study-name in the paramp.yaml is the same as the folder name of the study
-3) Add --copy to ignore downloaded files and copy study.
+3) Add --copy to ignore downloaded files and copy study and copy from remote.
 4) Handle CTRL+C
 5) Add JOB_STATE file to cases to handle restarts. The jobid will change when resubmitting.
 6) Ask for confirmation while deleting.
@@ -16,6 +16,7 @@
 19) Allow working locally
 20) Print param tree
 21) Finish qdel, qstat
+22) Hook system pre/post-build
 
 LONG TERM:
 - Testing framework
