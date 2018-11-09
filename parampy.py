@@ -16,6 +16,7 @@ import anytree
 from anytree.importer import DictImporter
 from common import replace_placeholders, MessagePrinter, ProgressBar
 from study import Study, Case
+from UserDict import UserDict
 
 import colorama as color
 _printer = None
@@ -23,18 +24,6 @@ _printer = None
 
 SRC_DIR = os.path.dirname(os.path.realpath(__file__))
 DEFAULTS_DIR = os.path.join(SRC_DIR, "defaults")
-
-# NOTE: NOT USED ANYMORE BUT USEFUL!
-# def str2type(l):
-#     def converter(l):
-#         for i in l:
-#             try:
-#                 yield json.loads(i)
-#             except ValueError:
-#
-#                 yield i
-#     return list(converter(l))
-#
 
 def decode_case_selector(selector, nof_cases):
     cases_idx = []
@@ -66,6 +55,33 @@ def decode_case_selector(selector, nof_cases):
     return cases_idx
 
 
+class Instance(UserDict):
+    def __init__(self):
+        UserDict.__init__(self)
+        self.backtrace = []
+        self.current_key = None
+
+    def resolve_params(self):
+        for pname, pval in self.items():
+            if callable(pval):
+                try:
+                    self[pname] = pval(self)
+                except Exception as error:
+                    print "Error in 'genenerators.py(%s)':" %  pname
+                    raise error
+                
+    def __getitem__(self, key):
+        item = UserDict.__getitem__(self, key)
+        if callable(item):
+            if key in self.backtrace:
+                self.backtrace.append(key)
+                decorated_backtrace = ["({})".format(call) for call in self.backtrace]
+                bt_str = "->".join(decorated_backtrace)
+                raise Exception("Error: Circular dependency of parameter '{}' found [{}]".format(key, bt_str))
+            self.backtrace.append(key)
+            self[key] = item(self) 
+        return UserDict.__getitem__(self, key)
+
 
 class StudyGenerator(MessagePrinter, Study):
     DEFAULT_DIRECTORIES = ["template/build", "template/input", "template/output", "template/postproc"]
@@ -79,14 +95,14 @@ class StudyGenerator(MessagePrinter, Study):
         self.short_name = short_name
         self.build_once = build_once
         self.keep_onerror = keep_onerror
-        self.params = self.study.param_file["PARAMETERS-DEFAULT"]
+        self.multiv_params = DictImporter().import_(self.study.param_file["PARAMS-MULTIVAL"])
+        self.singlev_params = self.study.param_file["PARAMS-SINGLEVAL"]
         #Include build.sh to files to replace placeholders
         self.study.param_file["FILES"].append({"path": ".", "files": ["build.sh"]})
         # self.linear_param_size = 0
         # self.linear_param_list = self._get_params_by_mode("linear")
         # self.combinatoric_param_list = self._get_params_by_mode("combinatoric")
         # linear_multival_param_list = self._check_linear_params()
-        self.root = DictImporter().import_(self.study.param_file["PARAMETERS-TREE"])
         # self.multival_keys = [node.name  for node in anytree.PreOrderIter(self.root, filter_=lambda n: n.name != "default")]
         self.template_path = os.path.join(self.study.path, "template")
         self.build_script_path = os.path.join(self.template_path, "build.sh")
@@ -108,39 +124,6 @@ class StudyGenerator(MessagePrinter, Study):
                 log.write(case + ':\n')
                 log.writelines(output)
                 log.write('\n')
-
-    # def _compute_nof_instances(self):
-    #     nof_instances = 1
-    #     if self.linear_param_list:
-    #         nof_instances = len(self.linear_param_list[0]["value"])
-    #     for param in self.combinatoric_param_list:
-    #         nof_instances *= len(param["value"])
-    #     return nof_instances
-    #     
-    
-
-    # def _get_params_by_mode(self,  mode):
-    #     params_out = []
-    #     for k, v in self.params.items():
-    #         if v["mode"] == mode:
-    #             param = v.copy()
-    #             param["name"] = k
-    #             params_out.append(param)
-    #     return params_out
-
-           
-    # def _check_linear_params(self):
-    #     max_param_size = max([len(p["value"]) for p in self.linear_param_list])
-    #     multivalued_params = []
-    #     for p in self.linear_param_list:
-    #         if len(p["value"]) == 1:
-    #             p["value"] = p["value"] * max_param_size
-    #         elif len(p["value"]) == max_param_size:
-    #             multivalued_params.append(p)
-    #         elif len(p["value"]) != max_param_size:
-    #             raise Exception("Error: All linear params lists must be same size or one.")
-    #     self.linear_param_size = max_param_size
-    #     return multivalued_params
 
 
       #TODO: Create a file with instance information
@@ -190,19 +173,9 @@ class StudyGenerator(MessagePrinter, Study):
         return instance_string
 
 
-    def _call_generators(self, instance):
-        for pname, pval in instance.items():
-            if callable(pval):
-                try:
-                    instance[pname] = pval(instance)
-                except Exception as error:
-                    raise Exception("Error in 'genenerators.py(%s)' - %s" %  (pname, str(error)))
-
-        return instance
-
     #TODO: Decouple state and behaviour of instances into a new class
     def generate_cases(self):
-        self._generate_param_combinations()
+        self._generate_instances()
         # Check if build.sh has to be run before generating the instances
         self.print_msg("Generating cases...")
         if not os.path.exists(self.template_path):
@@ -219,7 +192,8 @@ class StudyGenerator(MessagePrinter, Study):
                 raise Exception("No 'build.sh' script found but '--build-once' option was specified.")
         nof_instances = len(self.instances)
         for instance_id, instance in enumerate(self.instances):
-            instance = self._call_generators(instance)
+            # Resolve generators
+            instance.resolve_params()
             multival_params = self._get_multival_params(instance)
             instance_name = self._instance_directory_string(instance_id, multival_params,
                                                       nof_instances, self.short_name)
@@ -229,10 +203,10 @@ class StudyGenerator(MessagePrinter, Study):
         self.study.save()
         self.print_msg("Success: Created %d cases." % nof_instances)
 
-    def _generate_param_combinations(self):
-        instance = {}
+    def _generate_instances(self):
+        instance = Instance()
         self.instances = []
-        self._gen_comb_instances(instance, self.root)
+        self._gen_comb_instances(instance, self.multiv_params)
 
     def _gen_comb_instances(self, instance, node, val_idx=0, defaults={}):
         try:
@@ -248,16 +222,15 @@ class StudyGenerator(MessagePrinter, Study):
                         self._gen_comb_instances(instance, child, val_idx, defaults)
                 elif node.mode == "+":
                     instance[node.name] = node.value[val_idx]
-                    instance.update(self.params)
+                    instance.update(self.singlev_params)
                     self._gen_comb_instances(instance, child, defaults=defaults)
+                # self.multival_keys = ["seed", "surface-topology"] # ["pressure", "temperature", "wallvel-md", "wallvel-cfd", "ncy-cfd"]
                 self.multival_keys = ["pressure", "temperature", "wallvel-md", "wallvel-cfd", "ncy-cfd"]
         else:
             # print(instance)
-            instance.update(self.params)
+            instance.update(self.singlev_params)
             instance.update(defaults)
             self.instances.append(instance)
-
-    
 
 
 

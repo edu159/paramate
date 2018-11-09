@@ -59,14 +59,19 @@ class FilesSection:
     pass
 class DownloadSection:
     pass
+class BuildSection:
+    pass
+
+
 
 #TODO: Decouple allowed sections from Param file to make it general
 class ParamFile:
     def __init__(self, path='.', allowed_sections=None, fname='params.yaml'):
         self.ALLOWED_SECTIONS = {"STUDY": StudySection, 
-                                 "PARAMETERS-DEFAULT": ParamsDefaultSection,
-                                 "PARAMETERS-TREE": ParamsTreeSection,
+                                 "PARAMS-MULTIVAL": ParamsDefaultSection,
+                                 "PARAMS-SINGLEVAL": ParamsTreeSection,
                                  "DOWNLOAD": DownloadSection,
+                                 "BUILD": BuildSection,
                                  "FILES": FilesSection}
         self.study_path = os.path.abspath(path)
         self.fname = fname
@@ -98,7 +103,7 @@ class ParamFile:
                 # raise Exception("Error: Section '%s' is mandatory in 'params.yaml'." % section_name)
 
             #TODO: Rework this and check for correct format of params.yaml. Add this into ParamSection
-            if section_name == "PARAMETERS-DEFAULT":
+            if section_name == "PARAMS-SINGLEVAL":
                 try:
                     # Insert study path to load generators
                     sys.path.insert(0, self.study_path)
@@ -114,7 +119,9 @@ class ParamFile:
                             except AttributeError as error:
                                 raise Exception("Generator '%s' not found in 'generators.py'." % gen_name)
                             except Exception as error:
-                                raise Exception("Error in 'genenerators.py(%s)' - %s" %  (param_name, str(error)))
+                                print "Error in 'genenerators.py(%s)': " % param_name
+                                raise error
+                                # raise Exception("Error in 'genenerators.py(%s)' - %s" %  (param_name, str(error)))
                             if type(param_fields["value"]) is not list:
                                 raise Exception("Generators must return a list of values. Got '%s'."\
                                                 % type(param_fields["value"]))
