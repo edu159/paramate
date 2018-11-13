@@ -16,7 +16,7 @@ import anytree
 from anytree.importer import DictImporter
 from common import replace_placeholders, MessagePrinter, ProgressBar
 from study import Study, Case
-from UserDict import UserDict
+from files import ParamInstance
 
 import colorama as color
 _printer = None
@@ -55,33 +55,6 @@ def decode_case_selector(selector, nof_cases):
     return cases_idx
 
 
-class Instance(UserDict):
-    def __init__(self):
-        UserDict.__init__(self)
-        self.backtrace = []
-        self.current_key = None
-
-    def resolve_params(self):
-        for pname, pval in self.items():
-            if callable(pval):
-                try:
-                    self[pname] = pval(self)
-                except Exception as error:
-                    print "Error in 'genenerators.py(%s)':" %  pname
-                    raise error
-                
-    def __getitem__(self, key):
-        item = UserDict.__getitem__(self, key)
-        if callable(item):
-            if key in self.backtrace:
-                self.backtrace.append(key)
-                decorated_backtrace = ["({})".format(call) for call in self.backtrace]
-                bt_str = "->".join(decorated_backtrace)
-                raise Exception("Error: Circular dependency of parameter '{}' found [{}]".format(key, bt_str))
-            self.backtrace.append(key)
-            self[key] = item(self) 
-        return UserDict.__getitem__(self, key)
-
 
 class StudyGenerator(MessagePrinter, Study):
     DEFAULT_DIRECTORIES = ["template/build", "template/input", "template/output", "template/postproc"]
@@ -95,15 +68,10 @@ class StudyGenerator(MessagePrinter, Study):
         self.short_name = short_name
         self.build_once = build_once
         self.keep_onerror = keep_onerror
-        self.multiv_params = DictImporter().import_(self.study.param_file["PARAMS-MULTIVAL"])
-        self.singlev_params = self.study.param_file["PARAMS-SINGLEVAL"]
-        #Include build.sh to files to replace placeholders
+        self.multiv_params = self.study.param_file.sections["PARAMS-MULTIVAL"].tree
+        self.singlev_params = self.study.param_file.sections["PARAMS-SINGLEVAL"].data
+        #TODO:Include build.sh to files to replace placeholders
         self.study.param_file["FILES"].append({"path": ".", "files": ["build.sh"]})
-        # self.linear_param_size = 0
-        # self.linear_param_list = self._get_params_by_mode("linear")
-        # self.combinatoric_param_list = self._get_params_by_mode("combinatoric")
-        # linear_multival_param_list = self._check_linear_params()
-        # self.multival_keys = [node.name  for node in anytree.PreOrderIter(self.root, filter_=lambda n: n.name != "default")]
         self.template_path = os.path.join(self.study.path, "template")
         self.build_script_path = os.path.join(self.template_path, "build.sh")
         self.instances = []
@@ -204,38 +172,54 @@ class StudyGenerator(MessagePrinter, Study):
         self.print_msg("Success: Created %d cases." % nof_instances)
 
     def _generate_instances(self):
-        instance = Instance()
+        instance = ParamInstance()
         self.instances = []
         self._gen_comb_instances(instance, self.multiv_params)
 
     def _gen_comb_instances(self, instance, node, val_idx=0, defaults={}):
+        # Stop condition
+        if node is None:
+            instance.update(self.singlev_params)
+            instance.update(defaults)
+            self.instances.append(instance.copy())
+            return 
+
+        def span_mult(child):
+            for val_idx, val in enumerate(node.values):
+                instance[node.name] = val
+                self._gen_comb_instances(instance, child, val_idx, defaults.copy())
+        def span_add(child):
+            instance[node.name] = node.values[val_idx]
+            self._gen_comb_instances(instance, child, defaults=defaults.copy())
+
         try:
             defaults_node = node.defaults
         except:
             defaults_node = {}
-        if node.children:
+        common_params = set(defaults.keys()).intersection(set(defaults_node.keys()))
+        if common_params:
+            print defaults.keys(), defaults_node.keys(), node
+            raise Exception("Parameter(s) '{}'  with same name.".format(tuple(common_params)))
+        defaults.update(defaults_node)
+        if node.is_root:
             for child in node.children:
-                if node.parent is None or node.mode == "*":
-                    for val_idx, val in enumerate(node.values):
-                        instance[node.name] = val
-                        defaults.update(defaults_node)
-                        self._gen_comb_instances(instance, child, val_idx, defaults)
+                span_mult(child)
+        elif not node.is_leaf:
+            for child in node.children:
+                if node.mode == "*":
+                    span_mult(child)
                 elif node.mode == "+":
-                    instance[node.name] = node.value[val_idx]
-                    instance.update(self.singlev_params)
-                    self._gen_comb_instances(instance, child, defaults=defaults)
-                # self.multival_keys = ["seed", "surface-topology"] # ["pressure", "temperature", "wallvel-md", "wallvel-cfd", "ncy-cfd"]
-                self.multival_keys = ["pressure", "temperature", "wallvel-md", "wallvel-cfd", "ncy-cfd"]
+                    span_add(child)
         else:
-            # print(instance)
-            instance.update(self.singlev_params)
-            instance.update(defaults)
-            self.instances.append(instance)
+            if node.mode == "*":
+                span_mult(None)
+            elif node.mode == "+":
+                span_add(None)
 
 
 
     def _get_multival_params(self, instance):
-        return {k:v for k,v in instance.items() if k in self.multival_keys}
+        return {k:v for k,v in instance.items() if k in self.study.param_file.sections["PARAMS-MULTIVAL"].multival_keys}
 
     @classmethod 
     def create_study(cls, path, study_name):
@@ -263,7 +247,6 @@ def opts_get_remote(abs_remote_path, remote_name):
         sys.exit("Error: File 'remote.yaml' not found in study directory.")
     try:
         _printer.print_msg("Testing connection to remote '%s'..." % remote_name, end='')
-        print "OK"
         r.available()
         #TODO: Change to Python3 print function to avoid new lines
         # print "OK."
@@ -315,7 +298,9 @@ def generate_action(args):
         if args.debug:
             raise
         else:
-            sys.exit("Error: " + str(error))
+            _printer.print_msg(str(error), "error")
+            _printer.print_msg("Aborting...", "error")
+            sys.exit()
 
 def delete_action(args):
     study_path = os.path.abspath('.')

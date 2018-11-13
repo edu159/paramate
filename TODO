@@ -17,6 +17,7 @@
 20) Print param tree
 21) Finish qdel, qstat
 22) Hook system pre/post-build
+23) @gen_list_static and @gen_list_dynamic generators
 
 LONG TERM:
 - Testing framework
