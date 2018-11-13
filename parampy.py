@@ -216,10 +216,9 @@ class StudyGenerator(MessagePrinter, Study):
             elif node.mode == "+":
                 span_add(None)
 
-
-
     def _get_multival_params(self, instance):
-        return {k:v for k,v in instance.items() if k in self.study.param_file.sections["PARAMS-MULTIVAL"].multival_keys}
+        return {k:v for k,v in instance.items() if k in
+                self.study.param_file.sections["PARAMS-MULTIVAL"].param_names}
 
     @classmethod 
     def create_study(cls, path, study_name):

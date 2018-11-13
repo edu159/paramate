@@ -43,7 +43,6 @@ class ParamInstance(UserDict):
                 raise Exception("Error: Circular dependency of parameter '{}' found [{}]".format(key, bt_str))
             self.backtrace.append(key)
             self[key] = item(self) 
-            # print "K:", key, "val:", item(key)
         return UserDict.__getitem__(self, key)
 
 
@@ -94,18 +93,17 @@ class Section(object):
         self.study_path = study_path
         # Pointer to the ParamFile object to get access to other sections
         self.sections = sections
-        self.load_priority = 0
-        self.check = False
-        self.load = False
+        self.checked = False
+        self.loaded = False
         self._check()
         self._load()
 
 
     def _check(self):
-        self.check = True
+        self.checked = True
 
     def _load(self):
-        self.load = True
+        self.loaded = True
 
     def _check_value_dict(self, field, v, vtype):
         actual_type = type(v)
@@ -129,7 +127,7 @@ class Section(object):
         for e in plist:
             self._check_value_list(e, elem_type)
 
-    def _check_dict(self, field, pdict, allowed, value_type, required, mutual_exc=[]):
+    def _check_dict(self, field, pdict, allowed_fields, mutual_exc=[]):
         self._check_value_dict(field, pdict, dict)
 
         # Check for mutual exclusive groups
@@ -140,17 +138,21 @@ class Section(object):
                 raise Exception("Invalid combination of {} fields.\nExample:\n {}".format(tuple(intersect), self.example_str))
 
         # Check no other fields are present and type is correct
-        for  k in pdict.keys():
-            if k not in allowed:
+        for  k, v in pdict.items():
+            allowed_types = allowed_fields[k][0]
+            allowed_values = allowed_fields[k][2]
+            if k not in allowed_fields.keys():
                 raise Exception("Invalid field '{}' in section '{}'.\nExample:\n {}"\
                                 .format(k, self.name, self.example_str))
+            elif allowed_values is not None and v not in allowed_values:
+                raise Exception("Invalid field '{}' with value '{}' in section '{}'. Only '{}' values are allowed.\nExample:\n {}"\
+                                .format(k, v, self.name, allowed_values, self.example_str))
             else:
-                i = allowed.index(k)
-                data_t = value_type[i]
-                self._check_value_dict(k, pdict[k], data_t)
+                self._check_value_dict(k, pdict[k], allowed_types)
 
         # Check all mandatory fields are present and types
-        for k in required:
+        required_fields = [f for f in allowed_fields.keys() if allowed_fields[f][1]]
+        for k in required_fields:
             if k not in pdict.keys():
                 raise Exception("Required field '{}' not present in section '{}'.\nExample:\n {}"\
                                 .format(k, self.name, self.example_str))
@@ -167,8 +169,11 @@ class StudySection(Section):
 
     def _check(self):
         self._check_value_dict("STUDY", self.data, dict)
-        self._check_dict("STUDY", self.data, ["name", "description", "version"], [str, str, float], ["name"])
-        self.check = True
+        allowed_fields = {"name": (str, True, None),
+                          "description": (str, False, None),
+                          "version": (float, False, None)}
+        self._check_dict("STUDY", self.data, allowed_fields)
+        self.checked = True
                 
 
 class FilesSection(Section):
@@ -186,11 +191,12 @@ class FilesSection(Section):
 
 
     def _check(self):
+        allowed_fields = {"path": (str, True, None), "files": (list, True, None)}
         self._check_list("FILES", self.data, dict)
         for e1 in self.data:
-            self._check_dict("FILES", e1, ["path", "files"],  [str, list], ["path", "files"])
+            self._check_dict("FILES", e1, allowed_fields)
             self._check_list("files", e1["files"], str)
-        self.check = True
+        self.checked = True
 
 class DownloadSection(Section):
     def __init__(self, sections, data, study_path):
@@ -199,18 +205,28 @@ class DownloadSection(Section):
 
     def _check(self):
         self._check_list("DOWNLOAD", self.data, dict)
+        allowed_fields = {"path": (str, True, None),
+                          "include": (list, False, None),
+                          "exclude": (list, False, None)}
         for e1 in self.data:
-            self._check_dict("FILES", e1, ["path", "include", "exclude"],\
-                             [str, list, list], ["path"], [("include", "exclude")])
+            self._check_dict("FILES", e1, allowed_fields, [("include", "exclude")])
             if "include" in e1.keys():
                 self._check_list("include", e1["include"], str)
             elif "exclude" in e1.keys():
                 self._check_list("exclude", e1["include"], str)
-        self.check = True
+        self.checked = True
 
 class ParamsSection(Section):
     def __init__(self, sections, data, study_path, example_str, name):
         super(ParamsSection, self).__init__(sections, data, study_path, example_str, name) 
+        self.param_names = self._get_param_namelist()
+
+    # Override
+    def _get_param_namelist(self):
+        return []
+
+    def get_common_params(self, param_section):
+        return set(self.param_names).intersection(set(param_section.param_names))
 
     def _check_param_value(self, name, value):
         allowed_types = [list, bool, str, float, int]
@@ -226,14 +242,14 @@ class ParamsSection(Section):
     def _check_generator_name(self, name, gen_type):
         assert gen_type in ["list", "scalar"]
         regexp_scalar = "(gsc|gsv)"
-        regexp_list = "(glc|gls|gld)\(([0-9]+)\)" 
+        regexp_list = "(glc|glv|gld)\(([0-9]+)\)" 
         if gen_type == "scalar":
             regexp = regexp_scalar
             empty = (None, None)
         elif gen_type == "list":
             regexp = regexp_list
             empty = (None, None, None)
-        starts_with = re.match("^((gsc|gsv)|(glc|gls|gld)\(.+)\:", name) is not None or \
+        starts_with = re.match("^g.*\:", name) is not None or \
                       re.match("^{}\:".format(regexp_list), name) is not None
                             
         if starts_with:
@@ -264,16 +280,16 @@ class ParamsMultivalSection(ParamsSection):
         example_str = ""
         self.tree = DictImporter().import_(data)
         super(ParamsMultivalSection, self).__init__(sections, data, study_path, example_str, "PARAMS-MULTIVAL")
-        self.multival_keys = [node.name for node in PreOrderIter(self.tree)]
+
+    def _get_param_namelist(self):
+        return [node.name for node in PreOrderIter(self.tree)]
 
     def _check(self):
         self._check_value_dict("PARAMS-MULTIVAL", self.data, dict)
-        allowed  = ["name", "mode", "values", "defaults"]
-        required  = ["name", "mode", "values"]
-        fields_type = [str, str, (list, str), dict]
-        allowed_root = ["name", "values", "defaults"]
-        required_root = ["name", "values"]
-        root_type = [str, (list, str), dict]
+        allowed_fields = {"name": (str, True, None), "mode": (str, True, ('*','+')),
+                          "values": ((list, str), True, None), "defaults": (dict, False, None)}
+        allowed_root_fields = {"name": (str, True, None), "values": ((list, str), True, None),
+                               "defaults": (dict, False, None)}
         for node in PreOrderIter(self.tree):
             node_dict = {}
             # Search for fields defined in each node
@@ -281,16 +297,22 @@ class ParamsMultivalSection(ParamsSection):
                                      sorted(node.__dict__.items(), key=lambda item: item[0])):
                 node_dict[key] = value
             if node.is_root:
-                self._check_dict("PARAMS-MULTIVAL(node='{}')".format(node.name), node_dict, allowed_root, root_type, required_root )
+                self._check_dict("PARAMS-MULTIVAL(node='{}')".format(node.name), node_dict, allowed_root_fields)
             else:
-                self._check_dict("PARAMS-MULTIVAL(node='{}')".format(node.name), node_dict, allowed, fields_type, required)
-
+                self._check_dict("PARAMS-MULTIVAL(node='{}')".format(node.name), node_dict, allowed_fields)
+            # Check parameters
             self._check_param_name(node.name)
             for pvalue in node.values:
                 self._check_param_value(node.name, pvalue)
-            if type(pvalue) == str:
-                a = self._check_generator_name(node.values, "list")
-        self.check = True
+            # Check for generators
+            if type(node.values) == str:
+                ret = self._check_generator_name(node.values, "list")
+                # If it is not a generator str is not allowed
+                if None in ret:
+                    raise Exception("Values of parameter '{}' can only be of type 'list' or 'generator' but 'str' was found instead."\
+                                    .format(node.name))
+
+        self.checked = True
 
     def _load(self):
         # Replace generator strings for function objects
@@ -298,25 +320,24 @@ class ParamsMultivalSection(ParamsSection):
         for node in PreOrderIter(self.tree):
             if type(node.values) == str:
                 gen_type, list_size, gen_name = self._check_generator_name(node.values, "list") 
-                list_size = int(list_size)
                 if gen_name:
+                    list_size = int(list_size)
                     try:
                         pvalue = getattr(generators, gen_name)
                     except AttributeError as error:
                         raise Exception("Generator '%s' not found in 'generators.py'." % gen_name)
-                    pvalue = pvalue(self.sections["PARAMS-SINGLEVAL"].get_constant_params(), list_size)
-                    print pvalue
-                    # except Exception as error:
-                    #     raise Exception("Error in 'genenerators.py - '" + str(error))
-                    # if pvalue.__name__ not in ["gen_scalar_const_f", "gen_scalar_var_f"]:
-                    #     raise Exception("Generator '{}:{}' in section '{}' can only be of '@gen_scalar_const' or '@gen_scalar_var' type.".format(gen_type, gen_name, self.name))
-                    # elif pvalue.__name__ == "gen_scalar_const_f" and gen_type != "gsc":
-                    #     raise Exception("Generator '{}:{}' do not match type '@gen_scalar_const'.".format(gen_type, gen_name))
-                    # elif pvalue.__name__ == "gen_scalar_var_f" and gen_type != "gsv":
-                    #     raise Exception("Generator '{}:{}' do not match type '@gen_scalar_var'.".format(gen_type, gen_name))
-                    node.values = pvalue
-        self.load = True
-        # print [(k.name, k.values) for k in PreOrderIter(self.tree)]
+                    except Exception as error:
+                        raise Exception("Error in 'genenerators.py - '" + str(error))
+                    if pvalue.__name__ not in ["gen_list_const_f", "gen_list_dynamic_f", "gen_list_static_f"]:
+                        raise Exception("Generator '{}:{}' in section '{}' can only be of '@gen_list_const','@gen_list_variable' or '@gen_list_dynamic' type."\
+                                        .format(gen_type, gen_name, self.name))
+                    elif pvalue.__name__ == "gen_list_const_f" and gen_type != "glc":
+                        raise Exception("Generator '{}:{}' do not match type '@gen_list_const'.".format(gen_type, gen_name))
+                    elif pvalue.__name__ == "gen_list_var_f" and gen_type != "glv":
+                        raise Exception("Generator '{}:{}' do not match type '@gen_list_var'.".format(gen_type, gen_name))
+                    # Call generator
+                    node.values = pvalue(self.sections["PARAMS-SINGLEVAL"].get_constant_params(), list_size)
+        self.loaded = True
 
         
 
@@ -324,8 +345,9 @@ class ParamsMultivalSection(ParamsSection):
 class ParamsSinglevalSection(ParamsSection):
     def __init__(self, sections, data, study_path):
         super(ParamsSinglevalSection, self).__init__(sections, data, study_path, "", "PARAMS-SINGLEVAL")
-        self.singleval_keys = self.data.keys()
-        self.load_priority = 1
+
+    def _get_param_namelist(self):
+        return self.data.keys()
 
     def get_constant_params(self):
         pconst = {k:v for k,v in self.data.items() 
@@ -341,7 +363,7 @@ class ParamsSinglevalSection(ParamsSection):
             self._check_param_value(pname, pvalue)
             if type(pvalue) == str:
                 self._check_generator_name(pvalue, "scalar")
-        self.check = True
+        self.checked = True
 
 
     def _load(self):
@@ -370,70 +392,73 @@ class ParamsSinglevalSection(ParamsSection):
         const_params = ParamInstance(self.get_constant_params()) 
         const_params.resolve_params()
         self.data.update(const_params.data)
-        self.load = True
-
-
-
-                
+        self.loaded = True
 
 
 
 class BuildSection(Section):
     def __init__(self, sections, data, study_path):
         # self.ALLOWED_FIELDS = ["name", "description", "version"]
-        super(BuildSection, self).__init__(sections, data, study_path, "", "BUILD")
+        pass
+        # super(BuildSection, self).__init__(sections, data, study_path, "", "BUILD")
 
 
 #TODO: Decouple allowed sections from Param file to make it general
-class ParamFile:
+class ParamFile(Section):
     def __init__(self, path='.', allowed_sections=None, fname='params.yaml'):
-        self.ALLOWED_SECTIONS = {"STUDY": StudySection, 
-                                 "PARAMS-MULTIVAL": ParamsMultivalSection,
-                                 "PARAMS-SINGLEVAL": ParamsSinglevalSection,
-                                 "DOWNLOAD": DownloadSection,
-                                 "BUILD": BuildSection,
-                                 "FILES": FilesSection}
-        self.study_path = os.path.abspath(path)
+        # Map from section name to Class and loading priority
+        self.SECTIONS_CLASS    = {"STUDY": (StudySection, 0), 
+                                 "PARAMS-MULTIVAL": (ParamsMultivalSection, 0),
+                                 "PARAMS-SINGLEVAL":(ParamsSinglevalSection, 1) ,
+                                 "DOWNLOAD": (DownloadSection, 0),
+                                 "BUILD": (BuildSection, 0),
+                                 "FILES": (FilesSection, 0)}
+        study_path = os.path.abspath(path)
+        #NOTE: _check() and _load() not overriden here. _check_sections() and _load_sections() implemented.
+        #      This is to allow explicit load() call after constructor is called.
+        super(ParamFile, self).__init__({}, {}, study_path, "", "Param file")
         self.fname = fname
         self.path = os.path.join(self.study_path, fname)
         self.loaded = False
-        self.params_data = {}
-        self.sections = {}
 
     def load(self):
         try:
             with open(self.path, 'r') as paramfile:
-                self.params_data = yaml.load(paramfile)
+                self.data = yaml.load(paramfile)
         except IOError as e:
             raise Exception("Problem opening 'params.yaml' file - %s." % e.strerror)
         except Exception as error:
             raise Exception("Parsing error in 'params.yaml': \n" + str(error))
+        self._check_sections()
         self._load_sections()
         self.loaded = True
 
+    def _check_sections(self):
+        allowed_sections = {"STUDY": (dict, True, None),
+                            "PARAMS-MULTIVAL": (dict, True, None),
+                            "PARAMS-SINGLEVAL": (dict, False, None),
+                            "DOWNLOAD": (list, False, None),
+                            "FILES": (list, True, None)}
+                            # "BUILD": (dict, False, None)}
+        self._check_value_dict("Parameter file ", self.data, dict)
+        self._check_dict("PARAMS-MULTIVAL", self.data, allowed_sections)
+        self.checked = True
+        
 
     def _load_sections(self):
-        #TODO: Fix this. Make ParamFile inherit from Section as well.
-        self.sections["PARAMS-SINGLEVAL"] = self.ALLOWED_SECTIONS["PARAMS-SINGLEVAL"](self.sections,\
-                                            self.params_data["PARAMS-SINGLEVAL"], self.study_path)
-        for section_name, section_data in  self.params_data.items():
-            if section_name != "PARAMS-SINGLEVAL":
-                try:
-                    section_class =  self.ALLOWED_SECTIONS[section_name]
-                except Exception as error:
-                    raise
-                #TODO: Enforce that PARAMS-SINGLEVAL is parsed before multival
-                self.sections[section_name] = section_class(self.sections, section_data, self.study_path)
-                    # raise Exception("Error: Section '%s' is mandatory in 'params.yaml'." % section_name)
+        sections_sortby_priority  = sorted(self.SECTIONS_CLASS.items(), key=lambda kv: kv[1][1])[::-1]
+        for section_name, (section_class, section_priority) in sections_sortby_priority:
+            try:
+                self.sections[section_name] = section_class(self.sections, self.data[section_name], self.study_path)
+            except Exception as error:
+                # Section not present. All OK as _check_sections has already been called.
+                pass
 
-                #TODO: Rework this and check for correct format of params.yaml. Add this into ParamSection
-        # Check that there are no clash between multival and singleval params
-        common_params = set(self.sections["PARAMS-SINGLEVAL"].singleval_keys).\
-                intersection(self.sections["PARAMS-MULTIVAL"].multival_keys)
+        #TODO: Rework this and check for correct format of params.yaml. Add this into ParamSection
+        common_params = self.sections["PARAMS-MULTIVAL"].get_common_params(self.sections["PARAMS-SINGLEVAL"])
         if common_params:
             raise Exception("Parameter(s) '{}'  with same name.".format(tuple(common_params)))
 
-    #TODO: Add this to the specific DownloadSection object
     def get_download_paths(self, case):
         path_list = []
         case_path = os.path.join(self.study_path, case.name)
@@ -462,7 +487,7 @@ class ParamFile:
 
     def __getitem__(self, key):
         if self.loaded:
-            return self.params_data[key]
+            return self.data[key]
         else:
             raise Exception("File 'params.yaml' not loaded.")
 

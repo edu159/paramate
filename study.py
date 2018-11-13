@@ -103,7 +103,7 @@ class Study:
     def clean(self):
         for case in self.case_selection:
             case.reset()
-            d = self.param_file.get_download_paths(case)
+            d = self.param_file.sections["DOWNLOAD"].get_download_paths(case)
             # print d
             #TODO: Remove submit.sh from case
             #TODO: Remove files for real
