@@ -7,7 +7,7 @@ import shutil
 import re
 import sys
 import json
-from anytree import Node, PreOrderIter
+from anytree import Node, PreOrderIter, RenderTree
 from anytree.importer import DictImporter
 from study import Case
 from UserDict import UserDict
@@ -311,6 +311,11 @@ class ParamsMultivalSection(ParamsSection):
                 if None in ret:
                     raise Exception("Values of parameter '{}' can only be of type 'list' or 'generator' but 'str' was found instead."\
                                     .format(node.name))
+            # Add label for printing
+            if node.is_root:
+                node.label = node.name
+            else:
+                node.label = "({}){}".format(node.mode, node.name)
 
         self.checked = True
 
@@ -483,6 +488,11 @@ class ParamFile(Section):
             path_list.append(os.path.join(case_path, "postproc"))
             path_list.append(os.path.join(case_path, "output") )
         return path_list
+
+    def print_tree(self):
+        root = self.sections["PARAMS-MULTIVAL"].tree
+        print ""
+        print RenderTree(root).by_attr("label")
 
 
     def __getitem__(self, key):

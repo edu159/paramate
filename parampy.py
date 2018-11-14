@@ -283,6 +283,21 @@ def create_action(args):
         else:
             sys.exit("Error: " + str(error))
 
+def print_tree_action(args):
+    study_path = os.path.abspath('.')
+    study_name = os.path.basename(study_path)
+    try:
+        study = Study(study_name, study_path)
+        _printer.print_msg("Printing param tree...", "info")
+        study.param_file.print_tree()
+    except Exception as error:
+        if args.debug:
+            raise
+        else:
+            _printer.print_msg(str(error), "error")
+            _printer.print_msg("Aborting...", "error")
+            sys.exit()
+
 def generate_action(args):
     study_path = os.path.abspath('.')
     study_name = os.path.basename(study_path)
@@ -560,6 +575,10 @@ if __name__ == "__main__":
     parser_generate.add_argument("--shortname", action="store_true", default=False, help="Study instances are short named.")
     parser_generate.add_argument("--keep-on-error", action="store_true", default=False, help="Keep files in case of an error during generation.")
     parser_generate.add_argument("--build-once", action="store_true", default=False, help="Execute only once the build script.")
+
+    # Parser print-tree
+    parser_delete = subparsers.add_parser('print-tree', help="Print parameter tree.")
+    parser_delete.set_defaults(func=print_tree_action)
 
     # Parser delete 
     parser_delete = subparsers.add_parser('delete', help="Delete all instances in a study.")

@@ -14,10 +14,9 @@
 17) Allow expand values after generating case
 18) Allow defining qstat, qsub, qstat custom commands
 19) Allow working locally
-20) Print param tree
 21) Finish qdel, qstat
 22) Hook system pre/post-build
-23) @gen_list_static and @gen_list_dynamic generators
+23) @gen_list_var and @gen_list_dynamic generators
 
 LONG TERM:
 - Testing framework
