@@ -81,7 +81,7 @@ class StudyGenerator(MessagePrinter, Study):
         cwd = os.getcwd()
         try:
             os.chdir(os.path.dirname(build_script_path))
-            output = subprocess.check_output([build_script_path], stderr=subprocess.STDOUT)
+            output = subprocess.check_output(["bash", build_script_path], stderr=subprocess.STDOUT)
         except subprocess.CalledProcessError as error:
             output = error.output
             raise Exception("Error while running 'build.sh' script.")
