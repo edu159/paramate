@@ -15,7 +15,6 @@ from common import replace_placeholders, MessagePrinter
 #TODO: Refactor Remote to separate configuration-related stuff
 SRC_DIR = os.path.dirname(os.path.realpath(__file__))
 DEFAULTS_DIR = os.path.join(SRC_DIR, "defaults")
-CONFIG_DIR = os.path.join(os.getenv("HOME"), ".parampy")
 DEFAULT_DOWNLOAD_DIRS = ["output", "postproc"]
 
 
