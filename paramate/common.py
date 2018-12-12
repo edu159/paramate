@@ -34,13 +34,17 @@ class MessagePrinter(object):
                          "warning": color.Fore.YELLOW,
                          "error": color.Fore.RED,
                          "input": color.Fore.BLUE,
+                         "unformated": None
                          }
     #Logic: a) --quiet option can be ignored.
     #       b) if verbose=True then check --verbose flag 
             
     def print_msg(self, message, msg_type="info", ignore_quiet=False, verbose=False, end="\n"):
         max_len = max([len(k) for k in self.colormap.keys()])
-        formatted_msg = self.colormap[msg_type] + "[ " + msg_type.capitalize().ljust(max_len) + " ] " + color.Fore.WHITE +  message
+        if msg_type == "unformated":
+            formatted_msg = message
+        else:
+            formatted_msg = self.colormap[msg_type] + "[ " + msg_type.capitalize().ljust(max_len) + " ] " + color.Fore.WHITE +  message
         if not self.quiet:
             if verbose:
                 if self.verbose:

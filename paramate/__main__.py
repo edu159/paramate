@@ -118,12 +118,12 @@ class StudyGenerator(MessagePrinter, Study):
             replace_placeholders(file_paths, params)
             if not self.build_once:
                 # Force execution permissions to 'build.sh'
-                self.print_msg("--|Building...", verbose=True, end="")
+                self.print_msg("Building...", verbose=True, end="")
                 build_script_path = os.path.join(casedir, "build.sh")
                 os.chmod(build_script_path, stat.S_IXUSR | 
                          stat.S_IMODE(os.lstat(build_script_path).st_mode))
                 self.execute_build_script(build_script_path)
-                self.print_msg("Done.", verbose=True)
+                self.print_msg("Done.", verbose=True, msg_type="unformated")
         except Exception as error:
             if not self.keep_onerror:
                 shutil.rmtree(casedir)
@@ -552,7 +552,11 @@ def submit_action(args):
 
 
 
-if __name__ == "__main__":
+
+def main(args=None):
+    """The main routine."""
+    # if args is None:
+    #     args = sys.argv
     import argparse
     color.init()
     parser = argparse.ArgumentParser(description="Program to generate parameter studies.")
@@ -773,8 +777,11 @@ if __name__ == "__main__":
 
 
 
+    print("This is the main routine.")
+    print("It should do something interesting.")
 
+    # Do argument parsing here (eg. with argparse) and anything else
+    # you want your project to do.
 
-
-
-
+if __name__ == "__main__":
+    main()
