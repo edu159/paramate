@@ -644,6 +644,7 @@ def main(args=None):
     parser.add_argument("--force", action="store_true", default=False, help="Specify remote for an action.")
     parser.add_argument("--debug", action="store_true", default=False, help="Debug mode.")
     args = parser.parse_args()
+    global _printer
     _printer = MessagePrinter(verbose=args.verbose, quiet=args.quiet)
     args.func(args)
 
@@ -775,13 +776,6 @@ def main(args=None):
         # #     sys.exit(error)
         # r.close()
 
-
-
-    print("This is the main routine.")
-    print("It should do something interesting.")
-
-    # Do argument parsing here (eg. with argparse) and anything else
-    # you want your project to do.
 
 if __name__ == "__main__":
     main()
