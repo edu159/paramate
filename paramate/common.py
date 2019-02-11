@@ -4,6 +4,7 @@ import os
 import progressbar
 import colorama as color
 import time
+import sys
 
 # Parampy params useful to build paths.
 def replace_placeholders(file_paths, params):
@@ -54,6 +55,8 @@ class MessagePrinter(object):
         else:
             if ignore_quiet:
                 print(formatted_msg, end=end)
+        sys.stdout.flush()
+        sys.stderr.flush()
 
 
 class ProgressBar:

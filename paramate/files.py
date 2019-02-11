@@ -9,6 +9,7 @@ import sys
 import json
 from anytree import Node, PreOrderIter, RenderTree
 from anytree.importer import DictImporter
+from anytree.render import AsciiStyle 
 from study import Case
 from UserDict import UserDict
 
@@ -127,7 +128,11 @@ class Section(object):
         for e in plist:
             self._check_value_list(e, elem_type)
 
-    def _check_dict(self, field, pdict, allowed_fields, mutual_exc=[]):
+    def _check_dict(self, field, pdict, allowed_fields, mutual_exc=[], example_str_in=None):
+        if example_str_in is not None:
+            example_str = example_str_in
+        else:
+            example_str = self.example_str
         self._check_value_dict(field, pdict, dict)
 
         # Check for mutual exclusive groups
@@ -135,27 +140,28 @@ class Section(object):
         for g in mutual_exc_sets:
             intersect = g.intersection(set(pdict.keys()))
             if len(intersect) > 1:
-                raise Exception("Invalid combination of {} fields.\nExample:\n {}".format(tuple(intersect), self.example_str))
+                raise Exception("Invalid combination of {} fields.\nExample:\n {}".format(tuple(intersect), example_str))
 
         # Check no other fields are present and type is correct
         for  k, v in pdict.items():
-            allowed_types = allowed_fields[k][0]
-            allowed_values = allowed_fields[k][2]
             if k not in allowed_fields.keys():
                 raise Exception("Invalid field '{}' in section '{}'.\nExample:\n {}"\
-                                .format(k, self.name, self.example_str))
-            elif allowed_values is not None and v not in allowed_values:
-                raise Exception("Invalid field '{}' with value '{}' in section '{}'. Only '{}' values are allowed.\nExample:\n {}"\
-                                .format(k, v, self.name, allowed_values, self.example_str))
+                                .format(k, self.name, example_str))
             else:
-                self._check_value_dict(k, pdict[k], allowed_types)
+                allowed_types = allowed_fields[k][0]
+                allowed_values = allowed_fields[k][2]
+                if allowed_values is not None and v not in allowed_values:
+                    raise Exception("Invalid field '{}' with value '{}' in section '{}'. Only '{}' values are allowed.\nExample:\n {}"\
+                                    .format(k, v, self.name, allowed_values, example_str))
+                else:
+                    self._check_value_dict(k, pdict[k], allowed_types)
 
         # Check all mandatory fields are present and types
         required_fields = [f for f in allowed_fields.keys() if allowed_fields[f][1]]
         for k in required_fields:
             if k not in pdict.keys():
                 raise Exception("Required field '{}' not present in section '{}'.\nExample:\n {}"\
-                                .format(k, self.name, self.example_str))
+                                .format(k, self.name, example_str))
 
 
 
@@ -341,7 +347,10 @@ class ParamsMultivalSection(ParamsSection):
                     elif pvalue.__name__ == "gen_list_var_f" and gen_type != "glv":
                         raise Exception("Generator '{}:{}' do not match type '@gen_list_var'.".format(gen_type, gen_name))
                     # Call generator
-                    node.values = pvalue(self.sections["PARAMS-SINGLEVAL"].get_constant_params(), list_size)
+                    singleval_const_params = {}
+                    if "PARAMS-SINGLEVAL" in self.sections.keys():
+                        singleval_const_params = self.sections["PARAMS-SINGLEVAL"].get_constant_params() 
+                    node.values = pvalue(singleval_const_params, list_size)
         self.loaded = True
 
         
@@ -411,7 +420,7 @@ class BuildSection(Section):
 #TODO: Decouple allowed sections from Param file to make it general
 class ParamFile(Section):
     def __init__(self, path='.', allowed_sections=None, fname='params.yaml'):
-        # Map from section name to Class and loading priority
+        # Map from section name to (Class, loading priority)
         self.SECTIONS_CLASS    = {"STUDY": (StudySection, 0), 
                                  "PARAMS-MULTIVAL": (ParamsMultivalSection, 0),
                                  "PARAMS-SINGLEVAL":(ParamsSinglevalSection, 1) ,
@@ -445,24 +454,21 @@ class ParamFile(Section):
                             "DOWNLOAD": (list, False, None),
                             "FILES": (list, True, None)}
                             # "BUILD": (dict, False, None)}
-        self._check_value_dict("Parameter file ", self.data, dict)
-        self._check_dict("PARAMS-MULTIVAL", self.data, allowed_sections)
+        self._check_value_dict("Parameter file", self.data, dict)
+        self._check_dict("Parameter file", self.data, allowed_sections)
         self.checked = True
         
 
     def _load_sections(self):
         sections_sortby_priority  = sorted(self.SECTIONS_CLASS.items(), key=lambda kv: kv[1][1])[::-1]
         for section_name, (section_class, section_priority) in sections_sortby_priority:
-            try:
+            # self.data.keys() always contains valid sections as they have been checked previously in _check_sections()
+            if section_name in self.data.keys():
                 self.sections[section_name] = section_class(self.sections, self.data[section_name], self.study_path)
-            except Exception as error:
-                # Section not present. All OK as _check_sections has already been called.
-                pass
-
-        #TODO: Rework this and check for correct format of params.yaml. Add this into ParamSection
-        common_params = self.sections["PARAMS-MULTIVAL"].get_common_params(self.sections["PARAMS-SINGLEVAL"])
-        if common_params:
-            raise Exception("Parameter(s) '{}'  with same name.".format(tuple(common_params)))
+        if "PARAMS-SINGLEVAL" in self.sections.keys():
+            common_params = self.sections["PARAMS-MULTIVAL"].get_common_params(self.sections["PARAMS-SINGLEVAL"])
+            if common_params:
+                raise Exception("Parameter(s) '{}'  with same name.".format(tuple(common_params)))
 
     def get_download_paths(self, case):
         path_list = []
@@ -492,7 +498,7 @@ class ParamFile(Section):
     def print_tree(self):
         root = self.sections["PARAMS-MULTIVAL"].tree
         print ""
-        print RenderTree(root).by_attr("label")
+        print RenderTree(root, AsciiStyle()).by_attr("label")
 
 
     def __getitem__(self, key):

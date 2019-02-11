@@ -69,8 +69,12 @@ class StudyGenerator(MessagePrinter, Study):
         self.build_once = build_once
         self.keep_onerror = keep_onerror
         self.multiv_params = self.study.param_file.sections["PARAMS-MULTIVAL"].tree
-        self.singlev_params = self.study.param_file.sections["PARAMS-SINGLEVAL"].data
-        #TODO:Include build.sh to files to replace placeholders
+        # Not mandatory to have this section
+        try:
+            self.singlev_params = self.study.param_file.sections["PARAMS-SINGLEVAL"].data
+        except KeyError:
+            pass
+        # Include build.sh to files to replace placeholders
         self.study.param_file["FILES"].append({"path": ".", "files": ["build.sh"]})
         self.template_path = os.path.join(self.study.path, "template")
         self.build_script_path = os.path.join(self.template_path, "build.sh")
@@ -188,6 +192,7 @@ class StudyGenerator(MessagePrinter, Study):
             for val_idx, val in enumerate(node.values):
                 instance[node.name] = val
                 self._gen_comb_instances(instance, child, val_idx, defaults.copy())
+                
         def span_add(child):
             instance[node.name] = node.values[val_idx]
             self._gen_comb_instances(instance, child, defaults=defaults.copy())
@@ -198,12 +203,15 @@ class StudyGenerator(MessagePrinter, Study):
             defaults_node = {}
         common_params = set(defaults.keys()).intersection(set(defaults_node.keys()))
         if common_params:
-            print defaults.keys(), defaults_node.keys(), node
+            # print defaults.keys(), defaults_node.keys(), node
             raise Exception("Parameter(s) '{}'  with same name.".format(tuple(common_params)))
         defaults.update(defaults_node)
         if node.is_root:
-            for child in node.children:
-                span_mult(child)
+            if node.children:
+                for child in node.children:
+                    span_mult(child)
+            else:
+                span_mult(None)
         elif not node.is_leaf:
             for child in node.children:
                 if node.mode == "*":
@@ -240,19 +248,28 @@ class StudyGenerator(MessagePrinter, Study):
 def opts_get_remote(abs_remote_path, remote_name):
     r = remote.Remote()
     remote_yaml_path = os.path.join(abs_remote_path, "remote.yaml")
+
     try:
         r.load(remote_yaml_path, remote_name=remote_name)
     except IOError as error:
-        sys.exit("Error: File 'remote.yaml' not found in study directory.")
+        _printer.print_msg("File 'remote.yaml' not found in study directory.", "error")
+        _printer.print_msg("Aborting...", "error")
+        sys.exit() 
+
     try:
         _printer.print_msg("Testing connection to remote '%s'..." % remote_name, end='')
         r.available()
-        #TODO: Change to Python3 print function to avoid new lines
-        # print "OK."
+        print "OK."
     except remote.ConnectionTimeout as error:
-        sys.exit("Error: " + str(error))
+        print "Failed."
+        _printer.print_msg(str(error), "error")
+        _printer.print_msg("Aborting...", "error")
+        sys.exit()
     except Exception as error: 
-        sys.exit("Error: " + str(error))
+        print "Failed."
+        _printer.print_msg(str(error), "error")
+        _printer.print_msg("Aborting...", "error")
+        sys.exit()
     return r
 
 
@@ -267,7 +284,9 @@ def connect(remote, passwd, show_progress_bar=False):
         if args.debug:
             raise
         else:
-            sys.exit("Error: " + str(error))
+            _printer.print_msg(str(error), "error")
+            _printer.print_msg("Aborting...", "error")
+            sys.exit()
 
 
 # Actions for maim program
@@ -281,7 +300,9 @@ def create_action(args):
         if args.debug:
             raise
         else:
-            sys.exit("Error: " + str(error))
+            _printer.print_msg(str(error), "error")
+            _printer.print_msg("Aborting...", "error")
+            sys.exit()
 
 def print_tree_action(args):
     study_path = os.path.abspath('.')
@@ -333,7 +354,7 @@ def delete_action(args):
         if args.debug:
             raise
         else:
-            _printer.print_msg("Error: " + str(error), "error")
+            _printer.print_msg(str(error), "error")
             sys.exit()
 
 def init_remote_action(args):
@@ -411,7 +432,7 @@ def upload_action(args):
             study.set_selection(upload_cases_idx)
         _printer.print_msg("Uploading %d cases to remote '%s'..." % (len(study.case_selection), args.remote), "info")
         _printer.print_msg("Password(%s): " % r.name , "input", end='')
-        passwd = getpass.getpass("")
+        passwd = getpass.getpass()
         connect(r, passwd, show_progress_bar=True)
         sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
         try:
@@ -421,7 +442,8 @@ def upload_action(args):
                 raise
             else:
                 r.close()
-                sys.exit("Error: " + str(error))
+                _printer.print_msg(str(error), "error")
+                sys.exit()
         r.close()
 
 #NOTES: 1) Cases that have not been uploaded to a remote are ignored from the selected ones.
@@ -440,18 +462,19 @@ def download_action(args):
     cases_idx = decode_case_selector(case_selector, study.nof_cases)
     study.set_selection(cases_idx)
     cases_remote = study.get_cases(cases_idx, "id", sortby="remote")
-    print "[Selected %d cases to download]" % len(cases_idx)
+    _printer.print_msg("Selected %d cases to download" % len(cases_idx), "info")
     no_remote_cases = cases_remote.pop(None, None)
+    #TODO: Add force option
     if no_remote_cases is not None:
-        print "Info: %d selected cases has not been uploaded yet and will be ignored." % len(no_remote_cases)
+        _printer.print_msg("%d selected cases has not been uploaded yet and will be ignored." % len(no_remote_cases), "info")
     nof_remote_downloads = {}
     for remote_name, remote_cases in cases_remote.items():
         ucases = set(study.get_cases(["UPLOADED"], "status"))
         nof_uploaded = len(set(remote_cases).intersection(set(ucases)))  
         dcases = set(study.get_cases(["DOWNLOADED"], "status"))
         nof_downloaded = len(set(remote_cases).intersection(set(dcases)))  
-        print "  -'%s': %d cases (Info: %d downloaded, %d not submitted)" % (remote_name,\
-                len(remote_cases), nof_downloaded, nof_uploaded)
+        _printer.print_msg("  -'%s': %d cases (Info: %d downloaded, %d not submitted)" % (remote_name,\
+                len(remote_cases), nof_downloaded, nof_uploaded), "info")
         if args.force:
             nof_remote_downloads.update({remote_name: len(remote_cases)})
         else:
@@ -459,15 +482,17 @@ def download_action(args):
     if args.yes:
         opt = 'Y'
     else:
-        opt = raw_input("Continue?['Y','y']:")
+        _printer.print_msg("Continue?['Y','y']:", "input", end='')
+        opt = raw_input("")
     if opt in ['y', 'Y']:
         for remote_name, remote_cases in cases_remote.items():
             r = opts_get_remote(study_path, remote_name)
-            print "Downloading %d cases from remote '%s'..." % (nof_remote_downloads[remote_name], remote_name)
+            _printer.print_msg("Downloading %d cases from remote '%s'..." % (nof_remote_downloads[remote_name], remote_name), "info")
             # Continue to the next remote if there are not cases to download
             if nof_remote_downloads[remote_name] == 0:
                 continue
-            passwd = getpass.getpass("Password(%s): " % remote_name)
+            _printer.print_msg("Password(%s): " % r.name , "input", end='')
+            passwd = getpass.getpass()
             connect(r, passwd, show_progress_bar=True)
             sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
             try:
@@ -487,9 +512,10 @@ def download_action(args):
                     raise
                 else:
                     r.close()
-                    sys.exit("Error:" + str(error))
+                    _printer.print_msg(str(error), "error")
+                    sys.exit()
             r.close()
-        print "Done."
+        _printer.print_msg("Done.", "info")
 
 def submit_action(args):
     study_path = os.path.abspath('.')
