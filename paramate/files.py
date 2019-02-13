@@ -235,7 +235,7 @@ class ParamsSection(Section):
         return set(self.param_names).intersection(set(param_section.param_names))
 
     def _check_param_value(self, name, value):
-        allowed_types = [list, bool, str, float, int]
+        allowed_types = [dict, list, bool, str, float, int]
         value_type = type(value)
         if value_type not in allowed_types:
             raise Exception("Type '{}' of parameter '{}' is not one in '{}'.".\
@@ -275,6 +275,7 @@ class ParamsSection(Section):
             sys.path.insert(0, self.study_path)
             import generators
         except Exception as err:
+            raise
             #TODO: THis should be a warning message not an exception
             raise Exception("File 'generators.py' not found in study directory.")
         return generators

@@ -9,21 +9,49 @@ import sys
 # Parampy params useful to build paths.
 def replace_placeholders(file_paths, params):
     for path in file_paths:
-        try:
-            lines = []
-            with open(path, 'r') as placeholder_file:
-                lines = placeholder_file.readlines()                                                                                                                                                                                                 
-            for ln, line in enumerate(lines):
-                line_opts = set(re.findall(r'\$\[([a-zA-Z0-9\-]+?)\]', line))
-                for opt in line_opts:
+        lines = []
+        with open(path, 'r') as placeholder_file:
+            lines = placeholder_file.readlines()                                                                                                                                                                                                 
+        for ln, line in enumerate(lines):
+            # Find all candidate to placeholders
+            line_opts = re.findall(r'\$\[([^\[^\]]+)\]', line)
+            param_value = ""
+            param_not_found = False
+            param_not_found_Exception = lambda opt: Exception("Parameter '%s' not defined in 'params.yaml' (Found in '%s')." % (opt, os.path.basename(path)))
+            for opt in line_opts:
+                dict_params = re.match(r'(.+)\.(.+)', opt)
+                if dict_params is not None:
+                    dict_params = dict_params.groups()
                     try:
-                        lines[ln] = lines[ln].replace("$[" + opt + "]", str(params[opt]))
+                        param_value = str(params[dict_params[0]][dict_params[1]])
                     except KeyError as error:
-                        raise Exception("Parameter '%s' not defined in 'params.yaml' (Found in '%s')." % (opt, os.path.basename(path)))
-            with open(path, 'w+') as replaced_file:
-                replaced_file.writelines(lines)
-        except Exception as error:
-            raise error
+                        raise param_not_found_Exception(opt)
+                    paramtype = type(params[dict_params[0]]) 
+                    if paramtype != dict:
+                        raise Exception("Parameter '{}' is defined as a '{}', but 'dict' type found.' (Found in '{}').".format(opt, str(paramtype.__name__), os.path.basename(path)))
+                else:
+                    list_params = re.match(r'([^\(^\)]+)\(([0-9]+)\)', opt)
+                    if list_params is not None:
+                        list_params = list_params.groups()
+                        try:
+                            param_value = str(params[list_params[0]])
+                        except KeyError as error:
+                            raise param_not_found_Exception(opt)
+                        try:
+                            param_value = str(param_value[int(list_params[1])])
+                        except IndexError:
+                            raise Exception("Parameter '%s' of type 'list' is out of range.' (Found in '%s')." % (opt, os.path.basename(path)))
+                        paramtype = type(params[list_params[0]]) 
+                        if paramtype != list:
+                            raise Exception("Parameter '{}' is defined as a '{}', but 'list' type found.' (Found in '{}').".format(opt, str(paramtype.__name__), os.path.basename(path)))
+                    else:
+                        try:
+                            param_value = str(params[opt])
+                        except KeyError as error:
+                            raise param_not_found_Exception(opt)
+                lines[ln] = lines[ln].replace("$[" + opt + "]", param_value)
+        with open(path, 'w+') as replaced_file:
+            replaced_file.writelines(lines)
 
 
 class MessagePrinter(object):
@@ -45,7 +73,7 @@ class MessagePrinter(object):
         if msg_type == "unformated":
             formatted_msg = message
         else:
-            formatted_msg = self.colormap[msg_type] + "[ " + msg_type.capitalize().ljust(max_len) + " ] " + color.Fore.WHITE +  message
+            formatted_msg = self.colormap[msg_type] + "[ " + msg_type.capitalize().ljust(max_len) + " ] " + color.Fore.WHITE +  message + color.Fore.RESET
         if not self.quiet:
             if verbose:
                 if self.verbose:

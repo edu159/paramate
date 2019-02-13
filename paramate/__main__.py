@@ -98,7 +98,7 @@ class StudyGenerator(MessagePrinter, Study):
                 log.write('\n')
 
 
-      #TODO: Create a file with instance information
+    #TODO: Create a file with instance information
     def _create_instance(self, instance_name, instance):
         self.print_msg("Creating instance '%s'..." % instance_name, verbose=True)
         casedir = os.path.join(self.study.path, instance_name)
@@ -128,10 +128,10 @@ class StudyGenerator(MessagePrinter, Study):
                          stat.S_IMODE(os.lstat(build_script_path).st_mode))
                 self.execute_build_script(build_script_path)
                 self.print_msg("Done.", verbose=True, msg_type="unformated")
-        except Exception as error:
+        except Exception:
             if not self.keep_onerror:
                 shutil.rmtree(casedir)
-            raise error
+            raise
         return instance_name
 
     def _instance_directory_string(self, instance_id, params, nof_instances, short_name=False):
