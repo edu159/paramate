@@ -7,6 +7,9 @@ import time
 import sys
 
 # Parampy params useful to build paths.
+# TODO: Currently only 1 level of nesting allowed for dictionaries. This provide the possibility 
+#       to return multiple values from a generator. Ideally an arbitrary level of nesting levels like
+#       YAML support would be the way to go. Nevertheless error checking become more convoluted.
 def replace_placeholders(file_paths, params):
     for path in file_paths:
         lines = []
@@ -62,7 +65,7 @@ class MessagePrinter(object):
         self.colormap = {"info": color.Fore.GREEN,
                          "warning": color.Fore.YELLOW,
                          "error": color.Fore.RED,
-                         "input": color.Fore.BLUE,
+                         "input": color.Fore.CYAN,
                          "unformated": None
                          }
     #Logic: a) --quiet option can be ignored.
@@ -73,7 +76,7 @@ class MessagePrinter(object):
         if msg_type == "unformated":
             formatted_msg = message
         else:
-            formatted_msg = self.colormap[msg_type] + "[ " + msg_type.capitalize().ljust(max_len) + " ] " + color.Fore.WHITE +  message + color.Fore.RESET
+            formatted_msg = self.colormap[msg_type] + "[ " + msg_type.capitalize().center(max_len) + " ] " + color.Fore.WHITE +  message + color.Fore.RESET
         if not self.quiet:
             if verbose:
                 if self.verbose:

@@ -19,7 +19,7 @@ setup(name='paramate',
       'pyyaml',
       'scp',
       'colorama',
-      'progressbar',
+      'progressbar2',
     ],
     include_package_data=True,
     zip_safe=False)
