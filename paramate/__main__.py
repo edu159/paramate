@@ -61,13 +61,14 @@ class StudyGenerator(MessagePrinter, Study):
     DEFAULT_FILES = ["template/exec.sh", "template/build.sh", "README", "params.yaml", 
                      "generators.py"] 
     def __init__(self, study, short_name=False, build_once=False,
-                 quiet=False, verbose=False, keep_onerror=False):
+                 quiet=False, verbose=False, keep_onerror=False, abort_undefined=False):
         super(StudyGenerator, self).__init__(quiet, verbose)
         #TODO: Check if the study case directory is empty and in good condition
         self.study = study
         self.short_name = short_name
         self.build_once = build_once
         self.keep_onerror = keep_onerror
+        self.abort_undefined = abort_undefined 
         self.multiv_params = self.study.param_file.sections["PARAMS-MULTIVAL"].tree
         # Not mandatory to have this section
         try:
@@ -85,10 +86,10 @@ class StudyGenerator(MessagePrinter, Study):
         cwd = os.getcwd()
         try:
             os.chdir(os.path.dirname(build_script_path))
-            output = subprocess.check_output(["bash", build_script_path], stderr=subprocess.STDOUT)
+            output = subprocess.check_output(["bash", "-e", build_script_path], stderr=subprocess.STDOUT)
         except subprocess.CalledProcessError as error:
             output = error.output
-            raise Exception("Error while running 'build.sh' script.")
+            raise Exception("Error while running 'build.sh' script. Check 'build.log' file.")
         finally:
             os.chdir(cwd)
             with open("build.log", "a+") as log:
@@ -119,7 +120,7 @@ class StudyGenerator(MessagePrinter, Study):
                       "PARAMPY-CD": casedir, 
                       "PARAMPY-SD": studydir}
             params.update(instance)
-            replace_placeholders(file_paths, params)
+            replace_placeholders(file_paths, params, self.abort_undefined)
             if not self.build_once:
                 # Force execution permissions to 'build.sh'
                 self.print_msg("Building...", verbose=True, end="")
@@ -327,7 +328,8 @@ def generate_action(args):
         sb  =  StudyGenerator(study, short_name=args.shortname,
                               build_once=args.build_once,
                               quiet=args.quiet,
-                              verbose=args.verbose, keep_onerror=args.keep_on_error)
+                              verbose=args.verbose, keep_onerror=args.keep_on_error,
+                              abort_undefined=args.abort_undefined)
         sb.generate_cases()
     except Exception as error:
         if args.debug:
@@ -605,6 +607,7 @@ def main(args=None):
     parser_generate.add_argument("--shortname", action="store_true", default=False, help="Study instances are short named.")
     parser_generate.add_argument("--keep-on-error", action="store_true", default=False, help="Keep files in case of an error during generation.")
     parser_generate.add_argument("--build-once", action="store_true", default=False, help="Execute only once the build script.")
+    parser_generate.add_argument("--abort-undefined", action="store_true", default=False, help="Abort execution if an undefined parameter is found.")
 
     # Parser print-tree
     parser_delete = subparsers.add_parser('print-tree', help="Print parameter tree.")

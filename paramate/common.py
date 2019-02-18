@@ -10,7 +10,7 @@ import sys
 # TODO: Currently only 1 level of nesting allowed for dictionaries. This provide the possibility 
 #       to return multiple values from a generator. Ideally an arbitrary level of nesting levels like
 #       YAML support would be the way to go. Nevertheless error checking become more convoluted.
-def replace_placeholders(file_paths, params):
+def replace_placeholders(file_paths, params, warn_undefined=False):
     for path in file_paths:
         lines = []
         with open(path, 'r') as placeholder_file:
@@ -28,7 +28,8 @@ def replace_placeholders(file_paths, params):
                     try:
                         param_value = str(params[dict_params[0]][dict_params[1]])
                     except KeyError as error:
-                        raise param_not_found_Exception(opt)
+                        if warn_undefined:
+                            raise param_not_found_Exception(opt)
                     paramtype = type(params[dict_params[0]]) 
                     if paramtype != dict:
                         raise Exception("Parameter '{}' is defined as a '{}', but 'dict' type found.' (Found in '{}').".format(opt, str(paramtype.__name__), os.path.basename(path)))
@@ -39,7 +40,8 @@ def replace_placeholders(file_paths, params):
                         try:
                             param_value = str(params[list_params[0]])
                         except KeyError as error:
-                            raise param_not_found_Exception(opt)
+                            if warn_undefined:
+                                raise param_not_found_Exception(opt)
                         try:
                             param_value = str(param_value[int(list_params[1])])
                         except IndexError:
@@ -51,7 +53,8 @@ def replace_placeholders(file_paths, params):
                         try:
                             param_value = str(params[opt])
                         except KeyError as error:
-                            raise param_not_found_Exception(opt)
+                            if warn_undefined:
+                                raise param_not_found_Exception(opt)
                 lines[ln] = lines[ln].replace("$[" + opt + "]", param_value)
         with open(path, 'w+') as replaced_file:
             replaced_file.writelines(lines)
