@@ -252,8 +252,13 @@ class ParamsSection(Section):
                             format(value_type.__name__, name, [e.__name__ for e in allowed_types]))
 
     def _check_param_name(self, name):
-        if re.match("^[a-z]{1}[a-z0-9]*(\-[a-z0-9]+)*$", name) is None:
-            raise Exception("Malformed parameter name '{}' in section '{}'.".format(name, self.name))
+        if type(name) == str:
+            names_in = (name,)
+        else:
+            names_in = name
+        for n in names_in:
+            if re.match("^[a-z]{1}[a-z0-9]*(\-[a-z0-9]+)*$", n) is None:
+                raise Exception("Malformed parameter name '{}' in section '{}'.".format(n, self.name))
     
     def _check_generator_name(self, name, gen_type):
         assert gen_type in ["list", "scalar"]
@@ -368,22 +373,33 @@ class ParamsMultivalSection(ParamsSection):
 
 class ParamsSinglevalSection(ParamsSection):
     def __init__(self, sections, data, study_path):
-        super(ParamsSinglevalSection, self).__init__(sections, data, study_path, "", "PARAMS-SINGLEVAL")
+        data_in = self._unfold_dict_params(data)
+        super(ParamsSinglevalSection, self).__init__(sections, data_in, study_path, "", "PARAMS-SINGLEVAL")
 
     def _get_param_namelist(self):
         return self.data.keys()
 
+    def _unfold_dict_params(self, data):
+        unfolded_params = {}
+        for pname, pvalue in data.items():
+            if type(pvalue) == dict:
+                for sub_pname, sub_pvalue in pvalue.items():
+                        unfolded_params.update({(pname, sub_pname):sub_pvalue})
+            unfolded_params.update({pname: pvalue})
+
+        return unfolded_params
+
     def get_constant_params(self):
         pconst = {}
         for pname, pvalue in self.data.items():
-            if type(pvalue) == dict:
+            # if type(pvalue) == dict:
+            #     pconst.update({pname:pvalue})
+            #     for sub_pname, sub_pvalue in pvalue.items():
+            #         if (callable(sub_pvalue) and  sub_pvalue.__name__ == "gen_scalar_const_f") or not callable(sub_pvalue):
+            #             pconst.update({(pname, sub_pname):sub_pvalue})
+            # else:
+            if (callable(pvalue) and  pvalue.__name__ == "gen_scalar_const_f") or not callable(pvalue):
                 pconst.update({pname:pvalue})
-                for sub_pname, sub_pvalue in pvalue.items():
-                    if (callable(sub_pvalue) and  sub_pvalue.__name__ == "gen_scalar_const_f") or not callable(sub_pvalue):
-                        pconst.update({(pname, sub_pname):sub_pvalue})
-            else:
-                if (callable(pvalue) and  pvalue.__name__ == "gen_scalar_const_f") or not callable(pvalue):
-                    pconst.update({pname:pvalue})
         return pconst
 
 

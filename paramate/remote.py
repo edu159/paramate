@@ -223,8 +223,10 @@ class StudyManager(MessagePrinter):
      
     def _upload(self, remote, name, base_path, upload_cases, keep_targz=False, force=False):
         if not remote.remote_dir_exists(remote.workdir):
-            raise Exception("Remote workdir '%s' do not exists. Use '--init-remote' command to create it." % remote.workdir)
+            raise Exception("Remote work directory '%s' do not exists. Use '--init-remote' command to create it." % remote.workdir)
         remotedir = os.path.join(remote.workdir, name)
+        if remote.remote_dir_exists(remotedir):
+            raise Exception("Remote study directory '%s' already exists. Use 'remote-delete' command to delete it." % remotedir)
         for case in upload_cases:
             remote_casedir = os.path.join(remotedir, case)
             if remote.remote_dir_exists(remote_casedir) and not force:
@@ -254,7 +256,7 @@ class StudyManager(MessagePrinter):
             out = remote.command("rm -f %s" % extract_src)
 
     
-    def upload(self, remote, array_job=False, keep_targz=False, force=False):
+    def upload(self, remote, array_job=False, keep_targz=True, force=False):
         params = {"PARAMPY-CD": "",
                   "PARAMPY-CN": "", 
                   "PARAMPY-RWD": remote.workdir, 

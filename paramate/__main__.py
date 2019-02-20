@@ -258,7 +258,7 @@ def opts_get_remote(abs_remote_path, remote_name):
         sys.exit() 
 
     try:
-        _printer.print_msg("Testing connection to remote '%s'..." % remote_name, end='')
+        _printer.print_msg("Testing connection to remote '%s'..." % r.name, end='')
         r.available()
         print "OK."
     except remote.ConnectionTimeout as error:
@@ -359,7 +359,7 @@ def delete_action(args):
             _printer.print_msg(str(error), "error")
             sys.exit()
 
-def init_remote_action(args):
+def remote_init_action(args):
     remote_name = args.remote
     study_path = os.path.abspath('.')
     study_name = os.path.basename(study_path)
@@ -432,9 +432,9 @@ def upload_action(args):
             upload_cases = set(study.case_selection) - set(no_upload_cases)
             upload_cases_idx = [c.id for c in upload_cases]
             study.set_selection(upload_cases_idx)
-        _printer.print_msg("Uploading %d cases to remote '%s'..." % (len(study.case_selection), args.remote), "info")
+        _printer.print_msg("Uploading %d cases to remote '%s'..." % (len(study.case_selection), r.name), "info")
         _printer.print_msg("Password(%s): " % r.name , "input", end='')
-        passwd = getpass.getpass()
+        passwd = getpass.getpass("")
         connect(r, passwd, debug=args.debug, show_progress_bar=True)
         sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
         try:
@@ -494,7 +494,7 @@ def download_action(args):
             if nof_remote_downloads[remote_name] == 0:
                 continue
             _printer.print_msg("Password(%s): " % r.name , "input", end='')
-            passwd = getpass.getpass()
+            passwd = getpass.getpass("")
             connect(r, passwd, debug=args.debug, show_progress_bar=True)
             sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
             try:
@@ -618,9 +618,9 @@ def main(args=None):
     parser_delete.set_defaults(func=delete_action)
 
     # Parser init-remote
-    parser_init_remote = subparsers.add_parser('init-remote', help="Get a resumed info of the study.")
-    parser_init_remote.add_argument('-r', '--remote', type=str, help="Remote name.")
-    parser_init_remote.set_defaults(func=init_remote_action)
+    parser_remote_init = subparsers.add_parser('remote-init', help="Get a resumed info of the study.")
+    parser_remote_init.add_argument('-r', '--remote', type=str, help="Remote name.")
+    parser_remote_init.set_defaults(func=remote_init_action)
 
     # Parser clean
     parser_clean = subparsers.add_parser('clean', help="Clean all instances in a study.")
