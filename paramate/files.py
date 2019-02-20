@@ -33,7 +33,13 @@ class ParamInstance(UserDict):
                 
     def __getitem__(self, key):
         try:
-            item = UserDict.__getitem__(self, key)
+            # if it is a tuple then the parameter is a dictionary
+            if type(key) == tuple:
+                item = UserDict.__getitem__(self, key[0])[key[1]]
+            else:
+                item = UserDict.__getitem__(self, key)
+            # if type(item) == dict:
+            #     item
         except KeyError:
             raise Exception("Parameter '{}' not found in generator '{}'.".format(key, self.current_generator.__name__))
         if callable(item):
@@ -44,7 +50,11 @@ class ParamInstance(UserDict):
                 raise Exception("Error: Circular dependency of parameter '{}' found [{}]".format(key, bt_str))
             self.backtrace.append(key)
             self[key] = item(self) 
-        return UserDict.__getitem__(self, key)
+
+        item_out = UserDict.__getitem__(self, key)
+        if type(key) == tuple:
+            UserDict.__getitem__(self, key[0])[key[1]] = item_out
+        return item_out
 
 
 
@@ -356,7 +366,6 @@ class ParamsMultivalSection(ParamsSection):
 
         
 
-
 class ParamsSinglevalSection(ParamsSection):
     def __init__(self, sections, data, study_path):
         super(ParamsSinglevalSection, self).__init__(sections, data, study_path, "", "PARAMS-SINGLEVAL")
@@ -365,9 +374,16 @@ class ParamsSinglevalSection(ParamsSection):
         return self.data.keys()
 
     def get_constant_params(self):
-        pconst = {k:v for k,v in self.data.items() 
-                          if (callable(v) and  v.__name__ == "gen_scalar_const_f") or\
-                              not callable(v)}
+        pconst = {}
+        for pname, pvalue in self.data.items():
+            if type(pvalue) == dict:
+                pconst.update({pname:pvalue})
+                for sub_pname, sub_pvalue in pvalue.items():
+                    if (callable(sub_pvalue) and  sub_pvalue.__name__ == "gen_scalar_const_f") or not callable(sub_pvalue):
+                        pconst.update({(pname, sub_pname):sub_pvalue})
+            else:
+                if (callable(pvalue) and  pvalue.__name__ == "gen_scalar_const_f") or not callable(pvalue):
+                    pconst.update({pname:pvalue})
         return pconst
 
 
@@ -382,25 +398,31 @@ class ParamsSinglevalSection(ParamsSection):
 
 
     def _load(self):
+        def get_generators(pvalue, generators):
+            if type(pvalue) == str:
+                    gen_type, gen_name = self._check_generator_name(pvalue, "scalar") 
+                    if gen_name:
+                        try:
+                            pvalue = getattr(generators, gen_name)
+                        except AttributeError as error:
+                            raise Exception("Generator '%s' not found in 'generators.py'." % gen_name)
+                        except Exception as error:
+                            raise Exception("Error in 'genenerators.py - '" + str(error))
+                        if pvalue.__name__ not in ["gen_scalar_const_f", "gen_scalar_var_f"]:
+                            raise Exception("Generator '{}:{}' in section '{}' can only be of '@gen_scalar_const' or '@gen_scalar_var' type.".format(gen_type, gen_name, self.name))
+                        elif pvalue.__name__ == "gen_scalar_const_f" and gen_type != "gsc":
+                            raise Exception("Generator '{}:{}' do not match type '@gen_scalar_const'.".format(gen_type, gen_name))
+                        elif pvalue.__name__ == "gen_scalar_var_f" and gen_type != "gsv":
+                            raise Exception("Generator '{}:{}' do not match type '@gen_scalar_var'.".format(gen_type, gen_name))
+            return pvalue
+
         # Replace generator strings for function objects
         generators = self._import_generators()
         for pname, pvalue in self.data.items():
-            if type(pvalue) == str:
-                gen_type, gen_name = self._check_generator_name(pvalue, "scalar") 
-                if gen_name:
-                    try:
-                        pvalue = getattr(generators, gen_name)
-                    except AttributeError as error:
-                        raise Exception("Generator '%s' not found in 'generators.py'." % gen_name)
-                    except Exception as error:
-                        raise Exception("Error in 'genenerators.py - '" + str(error))
-                    if pvalue.__name__ not in ["gen_scalar_const_f", "gen_scalar_var_f"]:
-                        raise Exception("Generator '{}:{}' in section '{}' can only be of '@gen_scalar_const' or '@gen_scalar_var' type.".format(gen_type, gen_name, self.name))
-                    elif pvalue.__name__ == "gen_scalar_const_f" and gen_type != "gsc":
-                        raise Exception("Generator '{}:{}' do not match type '@gen_scalar_const'.".format(gen_type, gen_name))
-                    elif pvalue.__name__ == "gen_scalar_var_f" and gen_type != "gsv":
-                        raise Exception("Generator '{}:{}' do not match type '@gen_scalar_var'.".format(gen_type, gen_name))
-                    self.data[pname] = pvalue
+            if type(pvalue) == dict:
+                for sub_pname, sub_pvalue in pvalue.items():
+                    self.data[pname][sub_pname] = get_generators(sub_pvalue, generators)
+            self.data[pname] = get_generators(pvalue, generators)
         # Remove the path 
         del sys.path[0]
         # Get constant parameters and resolve generators
@@ -443,7 +465,7 @@ class ParamFile(Section):
         except IOError as e:
             raise Exception("Problem opening 'params.yaml' file - %s." % e.strerror)
         except Exception as error:
-            raise Exception("Parsing error in 'params.yaml': \n" + str(error))
+            raise Exception("Internal error of YAML paraser in 'params.yaml': \n" + str(error))
         self._check_sections()
         self._load_sections()
         self.loaded = True

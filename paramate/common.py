@@ -10,52 +10,64 @@ import sys
 # TODO: Currently only 1 level of nesting allowed for dictionaries. This provide the possibility 
 #       to return multiple values from a generator. Ideally an arbitrary level of nesting levels like
 #       YAML support would be the way to go. Nevertheless error checking become more convoluted.
-def replace_placeholders(file_paths, params, warn_undefined=False):
+def replace_placeholders(file_paths, params, warn_undefined=True):
+    def get_param_value(params, pname, pname_in_file, undefined_dict, warn_undefined):
+        pvalue = None
+        try:
+            pvalue = params[pname]
+        except KeyError as error:
+            if warn_undefined:
+                raise Exception("Parameter '%s' not defined in 'params.yaml' (Found in '%s')." % (pname_in_file, os.path.basename(path)))
+            file_path = os.path.basename(path)
+            if file_path in undefined_dict.keys():
+                undefined_dict[file_path].append(pname_in_file)
+            else:
+                undefined_dict[file_path] = [pname_in_file]
+        return pvalue
+
+
+    printer = MessagePrinter(False, False)
     for path in file_paths:
         lines = []
         with open(path, 'r') as placeholder_file:
             lines = placeholder_file.readlines()                                                                                                                                                                                                 
+        undefined_dict = {}
         for ln, line in enumerate(lines):
             # Find all candidate to placeholders
             line_opts = re.findall(r'\$\[([^\[^\]]+)\]', line)
-            param_value = ""
+            param_value = "$[UNDEFINED]"
             param_not_found = False
-            param_not_found_Exception = lambda opt: Exception("Parameter '%s' not defined in 'params.yaml' (Found in '%s')." % (opt, os.path.basename(path)))
             for opt in line_opts:
                 dict_params = re.match(r'(.+)\.(.+)', opt)
                 if dict_params is not None:
                     dict_params = dict_params.groups()
-                    try:
-                        param_value = str(params[dict_params[0]][dict_params[1]])
-                    except KeyError as error:
-                        if warn_undefined:
-                            raise param_not_found_Exception(opt)
-                    paramtype = type(params[dict_params[0]]) 
-                    if paramtype != dict:
-                        raise Exception("Parameter '{}' is defined as a '{}', but 'dict' type found.' (Found in '{}').".format(opt, str(paramtype.__name__), os.path.basename(path)))
+                    sub_pvalue = get_param_value(params, dict_params[0], opt, undefined_dict, warn_undefined)
+                    if sub_pvalue is not None:
+                        paramtype = type(sub_pvalue) 
+                        if paramtype != dict:
+                            raise Exception("Parameter '{}' is defined as a '{}', but 'dict' type found.' (Found in '{}').".format(opt, str(paramtype.__name__), os.path.basename(path)))
+
+                        param_value = get_param_value(sub_pvalue, dict_params[1], opt, undefined_dict, warn_undefined)
                 else:
                     list_params = re.match(r'([^\(^\)]+)\(([0-9]+)\)', opt)
                     if list_params is not None:
                         list_params = list_params.groups()
-                        try:
-                            param_value = str(params[list_params[0]])
-                        except KeyError as error:
-                            if warn_undefined:
-                                raise param_not_found_Exception(opt)
-                        try:
-                            param_value = str(param_value[int(list_params[1])])
-                        except IndexError:
-                            raise Exception("Parameter '%s' of type 'list' is out of range.' (Found in '%s')." % (opt, os.path.basename(path)))
-                        paramtype = type(params[list_params[0]]) 
-                        if paramtype != list:
-                            raise Exception("Parameter '{}' is defined as a '{}', but 'list' type found.' (Found in '{}').".format(opt, str(paramtype.__name__), os.path.basename(path)))
+                        param_value = get_param_value(params, list_params[0], opt, undefined_dict, warn_undefined)
+                        if param_value is not None:
+                            try:
+                                param_value = param_value[int(list_params[1])]
+                            except IndexError:
+                                raise Exception("Parameter '%s' of type 'list' is out of range.' (Found in '%s')." % (opt, os.path.basename(path)))
+                            paramtype = type(params[list_params[0]]) 
+                            if paramtype != list:
+                                raise Exception("Parameter '{}' is defined as a '{}', but 'list' type found.' (Found in '{}').".format(opt, str(paramtype.__name__), os.path.basename(path)))
                     else:
-                        try:
-                            param_value = str(params[opt])
-                        except KeyError as error:
-                            if warn_undefined:
-                                raise param_not_found_Exception(opt)
-                lines[ln] = lines[ln].replace("$[" + opt + "]", param_value)
+                        param_value = get_param_value(params, opt, opt, undefined_dict, warn_undefined)
+                lines[ln] = lines[ln].replace("$[" + opt + "]", str(param_value))
+
+        if undefined_dict:
+            printer.print_msg(str(undefined_dict))
+
         with open(path, 'w+') as replaced_file:
             replaced_file.writelines(lines)
 

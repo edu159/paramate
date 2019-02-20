@@ -61,7 +61,7 @@ class StudyGenerator(MessagePrinter, Study):
     DEFAULT_FILES = ["template/exec.sh", "template/build.sh", "README", "params.yaml", 
                      "generators.py"] 
     def __init__(self, study, short_name=False, build_once=False,
-                 quiet=False, verbose=False, keep_onerror=False, abort_undefined=False):
+                 quiet=False, verbose=False, keep_onerror=False, abort_undefined=True):
         super(StudyGenerator, self).__init__(quiet, verbose)
         #TODO: Check if the study case directory is empty and in good condition
         self.study = study
@@ -607,7 +607,7 @@ def main(args=None):
     parser_generate.add_argument("--shortname", action="store_true", default=False, help="Study instances are short named.")
     parser_generate.add_argument("--keep-on-error", action="store_true", default=False, help="Keep files in case of an error during generation.")
     parser_generate.add_argument("--build-once", action="store_true", default=False, help="Execute only once the build script.")
-    parser_generate.add_argument("--abort-undefined", action="store_true", default=False, help="Abort execution if an undefined parameter is found.")
+    parser_generate.add_argument("--abort-undefined", action="store_false", default=True, help="Abort execution if an undefined parameter is found.")
 
     # Parser print-tree
     parser_delete = subparsers.add_parser('print-tree', help="Print parameter tree.")
