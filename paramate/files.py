@@ -21,6 +21,8 @@ class ParamInstance(UserDict):
 
     def resolve_params(self):
         for pname, pval in self.items():
+            # Empty backtrace
+            self.backtrace = []
             if callable(pval):
                 try:
                     #TODO: Fix name of the generator.

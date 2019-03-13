@@ -10,12 +10,72 @@ import tarfile
 from scp import SCPClient
 import socket
 from common import replace_placeholders, MessagePrinter
+import re
 
 
 #TODO: Refactor Remote to separate configuration-related stuff
 SRC_DIR = os.path.dirname(os.path.realpath(__file__))
 DEFAULTS_DIR = os.path.join(SRC_DIR, "defaults")
 DEFAULT_DOWNLOAD_DIRS = ["output", "postproc"]
+
+class CommandExecuter:
+
+    def __init__(self, ssh):
+        self.ssh = ssh
+        channel = self.ssh.invoke_shell()
+        self.stdin = channel.makefile('wb')
+        self.stdout = channel.makefile('r')
+
+
+
+    def exec_command(self, cmd):
+        """
+
+        :param cmd: the command to be executed on the remote computer
+        :examples:  execute('ls')
+                    execute('finger')
+                    execute('cd folder_name')
+        """
+        cmd = cmd.strip('\n')
+        self.stdin.write(cmd + '\n')
+        finish = 'end of stdOUT buffer. finished with exit status'
+        echo_cmd = 'echo {} $?'.format(finish)
+        self.stdin.write(echo_cmd + '\n')
+        shin = self.stdin
+        self.stdin.flush()
+
+        shout = []
+        sherr = []
+        exit_status = 0
+        for line in self.stdout:
+            if str(line).startswith(cmd) or str(line).startswith(echo_cmd):
+                # up for now filled with shell junk from stdin
+                shout = []
+            elif str(line).startswith(finish):
+                # our finish command ends with the exit status
+                exit_status = int(str(line).rsplit(None, 1)[1])
+                if exit_status:
+                    # stderr is combined with stdout.
+                    # thus, swap sherr with shout in a case of failure.
+                    sherr = shout
+                    shout = []
+                break
+            else:
+                # get rid of 'coloring and formatting' special characters
+                shout.append(re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]').sub('', line).
+                             replace('\b', '').replace('\r', ''))
+
+        # first and last lines of shout/sherr contain a prompt
+        if shout and echo_cmd in shout[-1]:
+            shout.pop()
+        if shout and cmd in shout[0]:
+            shout.pop(0)
+        if sherr and echo_cmd in sherr[-1]:
+            sherr.pop()
+        if sherr and cmd in sherr[0]:
+            sherr.pop(0)
+
+        return shin, shout, sherr, exit_status
 
 
 class CmdExecutionError(Exception):
@@ -42,7 +102,10 @@ class Remote(MessagePrinter):
         self.command_status = None
         self.scp = None
         self._progress_callback = None
+        self.cmd = None
 
+    def __del__(self):
+        self.ssh.close()
 
     @staticmethod
     def create_remote_template(path):
@@ -152,7 +215,6 @@ class Remote(MessagePrinter):
         else:
             self.print_msg("Done.")
 
-
     def connect(self, passwd=None, timeout=None, progress_callback=None):
         self._progress_callback = progress_callback
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -162,15 +224,21 @@ class Remote(MessagePrinter):
             self.ssh.connect(self.addr, port=self.port, username=self.username,\
                              password=passwd, timeout=timeout)
         self.scp = SCPClient(self.ssh.get_transport(), socket_timeout=60.0, progress=self._progress_callback)
+        self.cmd = CommandExecuter(self.ssh)
 
     def command(self, cmd, timeout=None, fail_on_error=True):
-        stdin, stdout, stderr = self.ssh.exec_command(cmd, timeout=timeout)
-        self.command_status = stdout.channel.recv_exit_status()
+        stdin, stdout, stderr, exit_status = self.cmd.exec_command(cmd) #, timeout=timeout)
+        self.command_status = exit_status #stdout.channel.recv_exit_status()
+        # stdin, stdout, stderr = self.ssh.exec_command(cmd, timeout=timeout)
+        # self.command_status = stdout.channel.recv_exit_status()
         if fail_on_error:
             if self.command_status != 0:
-                error = stderr.readlines()
+                # error = stderr.readlines()
+                error = stderr
                 raise CmdExecutionError("".join([l for l in error if l]))
-        return stdout.readlines()
+        # print "lines:" , stdout.readlines()
+        # return stdout.readlines()
+        return stdout
 
     def cmd_avail(self, cmd_name): 
         try:
@@ -227,6 +295,7 @@ class StudyManager(MessagePrinter):
         remotedir = os.path.join(remote.workdir, name)
         if remote.remote_dir_exists(remotedir):
             raise Exception("Remote study directory '%s' already exists. Use 'remote-delete' command to delete it." % remotedir)
+        self.print_msg("Checking remote state...")
         for case in upload_cases:
             remote_casedir = os.path.join(remotedir, case)
             if remote.remote_dir_exists(remote_casedir) and not force:
