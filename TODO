@@ -19,10 +19,8 @@ HIGH PRIORITY:
 11) Select files to be uploaded only once and reference with a variable
 19) Allow working locally
 *) add section-path: ./location  for each section
-15) Add ssh keys
 *) Check for proper parameter name for dictionary parameters keys.
 *) Support generators on "defaults" section.
-*) Retry password (3 attempts)
 
 
 

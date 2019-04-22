@@ -274,20 +274,30 @@ def opts_get_remote(abs_remote_path, remote_name):
     return r
 
 
-def connect(remote, passwd, debug=False, show_progress_bar=False):
-    try:
-        if show_progress_bar:
-            progress_bar = ProgressBar()
-            remote.connect(passwd, progress_callback=progress_bar.callback)
-        else:
-            remote.connect(passwd)
-    except Exception as error:
-        if debug:
-            raise
-        else:
-            _printer.print_msg(str(error), "error")
-            _printer.print_msg("Aborting...", "error")
-            sys.exit()
+def connect(remote, debug=False, show_progress_bar=False):
+    attempts = 0
+    while attempts < 3 and remote.password_ask or attempts == 0:
+        try:
+            passwd = None
+            if remote.password_ask:
+                _printer.print_msg("Password(%s): " % remote.name , "input", end='')
+                passwd = getpass.getpass("")
+            if show_progress_bar:
+                progress_bar = ProgressBar()
+                remote.connect(passwd, progress_callback=progress_bar.callback)
+            else:
+                remote.connect(passwd)
+        except Exception as error:
+            attempts += 1
+            if attempts < 3 and remote.password_ask:
+                continue
+            if debug:
+                raise
+            else:
+                _printer.print_msg(str(error), "error")
+                _printer.print_msg("Aborting...", "error")
+                sys.exit()
+        break
 
 
 # Actions for maim program
@@ -364,8 +374,7 @@ def remote_init_action(args):
     study_path = os.path.abspath('.')
     study_name = os.path.basename(study_path)
     r = opts_get_remote(study_path, remote_name)
-    passwd = getpass.getpass("Password(%s): " % r.name)
-    connect(r, passwd, debug=args.debug)
+    connect(r, debug=args.debug)
     try:
         r.init_remote()
     except Exception as error:
@@ -433,9 +442,7 @@ def upload_action(args):
             upload_cases_idx = [c.id for c in upload_cases]
             study.set_selection(upload_cases_idx)
         _printer.print_msg("Uploading %d cases to remote '%s'..." % (len(study.case_selection), r.name), "info")
-        _printer.print_msg("Password(%s): " % r.name , "input", end='')
-        passwd = getpass.getpass("")
-        connect(r, passwd, debug=args.debug, show_progress_bar=True)
+        connect(r, debug=args.debug, show_progress_bar=True)
         sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
         try:
             sm.upload(r, array_job=args.array_job, force=args.force)
@@ -493,9 +500,7 @@ def download_action(args):
             # Continue to the next remote if there are not cases to download
             if nof_remote_downloads[remote_name] == 0:
                 continue
-            _printer.print_msg("Password(%s): " % r.name , "input", end='')
-            passwd = getpass.getpass("")
-            connect(r, passwd, debug=args.debug, show_progress_bar=True)
+            connect(r, debug=args.debug, show_progress_bar=True)
             sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
             try:
                 # Force to download even not submitted cases
@@ -557,8 +562,7 @@ def submit_action(args):
             r = opts_get_remote(study_path, remote_name)
             print remote_name
             print "Submitting %d cases to remote '%s'..." % (nof_remote_submit[remote_name], remote_name)
-            passwd = getpass.getpass("Password(%s): " % remote_name)
-            connect(r, passwd, debug=args.debug)
+            connect(r, debug=args.debug)
             sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
             try:
                 # Get cases in remote and "FINISHED" from the selection
@@ -574,12 +578,6 @@ def submit_action(args):
                     r.close()
                     sys.exit("Error:" + str(error))
             r.close()
-
-
-
-
-
-
 
 def main(args=None):
     """The main routine."""
@@ -635,15 +633,27 @@ def main(args=None):
     parser_upload.add_argument('-f', '--force', action="store_true", help="Force upload. Overwrite files.")
     parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
     
-    # Parser submit
-    parser_upload = subparsers.add_parser('submit', help="Submit study remotely/localy.")
+    # Parser submit-jobs
+    parser_upload = subparsers.add_parser('submit-jobs', help="Submit study remotely/localy.")
     parser_upload.set_defaults(func=submit_action)
     parser_upload.add_argument('-s', '--selector', type=str, help="Case selector.")
     parser_upload.add_argument('-r', '--remote', type=str, help="Remote name.")
     parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
-    
 
-    
+    # Parser status-jobs
+    parser_upload = subparsers.add_parser('status-jobs', help="Submit study remotely/localy.")
+    parser_upload.set_defaults(func=submit_action)
+    parser_upload.add_argument('-s', '--selector', type=str, help="Case selector.")
+    parser_upload.add_argument('-r', '--remote', type=str, help="Remote name.")
+    parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
+
+    # Parser delete-jobs
+    parser_upload = subparsers.add_parser('status-jobs', help="Submit study remotely/localy.")
+    parser_upload.set_defaults(func=submit_action)
+    parser_upload.add_argument('-s', '--selector', type=str, help="Case selector.")
+    parser_upload.add_argument('-r', '--remote', type=str, help="Remote name.")
+    parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
+ 
     # Parser download 
     parser_download = subparsers.add_parser('download', help="download study to remote.")
     parser_download.set_defaults(func=download_action)
@@ -714,8 +724,7 @@ def main(args=None):
                 r = opts_get_remote(study_path, remote_name)
                 print remote_name
                 print "Submitting %d cases to remote '%s'..." % (nof_remote_submit[remote_name], remote_name)
-                passwd = getpass.getpass("Password(%s): " % remote_name)
-                connect(r, passwd, debug=args.debug)
+                connect(r, debug=args.debug)
                 sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
                 try:
                     # Get cases in remote and "FINISHED" from the selection

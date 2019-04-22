@@ -20,6 +20,7 @@ setup(name='paramate',
       'scp',
       'colorama',
       'progressbar2',
+      'cryptography',
     ],
     include_package_data=True,
     zip_safe=False)

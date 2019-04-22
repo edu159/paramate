@@ -86,12 +86,12 @@ class ConnectionTimeout(Exception):
 
 class Remote(MessagePrinter):
     def __init__(self, name="", workdir=None, addr=None,\
-            port=22, username=None, key_login=False, shell="bash",\
-            quiet=False, verbose=False):
+            port=22, username=None, ssh_key='', shell="bash",\
+            password_ask=True, quiet=False, verbose=False):
         super(Remote, self).__init__(quiet, verbose)
         self.name = name
         self.remote_yaml = None
-        self.key_login = key_login
+        self.ssh_key = ssh_key
         self.addr = addr
         self.port = port
         self.username = username
@@ -103,6 +103,7 @@ class Remote(MessagePrinter):
         self.scp = None
         self._progress_callback = None
         self.cmd = None
+        self.password_ask = password_ask
 
     def __del__(self):
         self.ssh.close()
@@ -145,21 +146,55 @@ class Remote(MessagePrinter):
         self._unpack_remote_yaml(self.remote_yaml)
 
     def _unpack_remote_yaml(self, yaml_remote):
+        if "host" in yaml_remote.keys():
+            host = yaml_remote["host"]
+            host_data = {}
+            with open("/home/eduardo/.ssh/config", 'r') as config_file:
+                sshconfig = paramiko.config.SSHConfig()
+                sshconfig.parse(config_file)
+                if host in sshconfig.get_hostnames():
+                    host_data = sshconfig.lookup(host)
+                else:
+                    raise Exception("Host '{}' not found in '$HOME/.ssh/config'.".format(host))
+            # Mandatory
+            try:
+                self.username = host_data["user"]
+                self.addr = host_data["hostname"]
+            except KeyError as e:
+                raise Exception("Field %s not found in host '{}' at '$HOME/.ssh/config'.".format(str(e)))
+            # Optional
+            if "port" in host_data.keys():
+                self.port = host_data["port"]
+            if "identityfile" in host_data.keys():
+                self.ssh_key = host_data["identityfile"]
+
+        else:
+            # Mandatory
+            try:
+                self.addr = yaml_remote["address"]
+                self.username = yaml_remote["username"]
+            except KeyError as e:
+                raise Exception("Mandatory field %s not found in remote file." % str(e))
+            # Optional
+            if "port" in yaml_remote.keys():
+                self.port = yaml_remote["port"]
+            if "ssh-key" in yaml_remote.keys():
+                self.ssh_key = yaml_remote["ssh-key"]
+
+        # Mandatory
         try:
-            self.addr = yaml_remote["address"]
-            self.port = yaml_remote["port"]
             self.workdir = yaml_remote["remote-workdir"]
-            self.username = yaml_remote["username"]
             self.resource_manager = yaml_remote["resource-manager"]
+            self.shell = yaml_remote["shell"]
         except KeyError as e:
-            raise Exception("Field %s not found in remote file." % str(e))
-        # Optional params
-        try:
-            self.key_login = yaml_remote["key-login"]
-        except Exception:
-            pass
+            raise Exception("Mandatory field %s not found in remote file." % str(e))
+        # Optional
+        if "shell" in yaml_remote.keys():
+            self.shell = yaml_remote["shell"]
+        if "password" in yaml_remote.keys():
+            self.password_ask = yaml_remote["password"]
 
-
+    #TODO: THis method is not updated with the new file structure
     def save(self, path):
         remotedata = {"remote": {}}
         try:
@@ -218,11 +253,8 @@ class Remote(MessagePrinter):
     def connect(self, passwd=None, timeout=None, progress_callback=None):
         self._progress_callback = progress_callback
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        if self.key_login:
-            self.ssh.connect(self.addr, port=self.port, timeout=timeout)
-        else:
-            self.ssh.connect(self.addr, port=self.port, username=self.username,\
-                             password=passwd, timeout=timeout)
+        self.ssh.connect(self.addr, port=self.port, timeout=timeout, username=self.username,\
+                         key_filename=self.ssh_key)
         self.scp = SCPClient(self.ssh.get_transport(), socket_timeout=60.0, progress=self._progress_callback)
         self.cmd = CommandExecuter(self.ssh)
 
@@ -291,10 +323,8 @@ class StudyManager(MessagePrinter):
      
     def _upload(self, remote, name, base_path, upload_cases, keep_targz=False, force=False):
         if not remote.remote_dir_exists(remote.workdir):
-            raise Exception("Remote work directory '%s' do not exists. Use '--init-remote' command to create it." % remote.workdir)
+            raise Exception("Remote work directory '%s' do not exists. Use 'remote-init' command to create it." % remote.workdir)
         remotedir = os.path.join(remote.workdir, name)
-        if remote.remote_dir_exists(remotedir):
-            raise Exception("Remote study directory '%s' already exists. Use 'remote-delete' command to delete it." % remotedir)
         self.print_msg("Checking remote state...")
         for case in upload_cases:
             remote_casedir = os.path.join(remotedir, case)
@@ -379,7 +409,7 @@ class StudyManager(MessagePrinter):
                     os.remove(submit_script_path)
                     raise
         else:
-            raise Exception("Submission script 'submit.%s.sh' not found in study directory." % self.remote.name)
+            raise Exception("Submission script 'submit.%s.sh' not found in study directory." % remote.name)
 
 
         # Set cases as uploaded
@@ -426,7 +456,7 @@ class StudyManager(MessagePrinter):
     def submit(self, remote, force=False, array_job=False):
         remote_studydir = os.path.join(remote.workdir, self.study.name)
         if not remote.remote_dir_exists(remote_studydir):
-            error = "Study '%s' not found in remote '%s'. Upload it first.\n" % (self.study_name, self.remote.name)
+            error = "Study '%s' not found in remote '%s'. Upload it first.\n" % (self.study_name, remote.name)
             error += "NOTE: Sometimes NFS filesystems take a while to syncronise.\n" +\
                      "      If you are sure the study is uploaded, wait a bit and retry submission."
             raise Exception(error)
@@ -456,7 +486,7 @@ class StudyManager(MessagePrinter):
 
     def update_status(self, remote):
         if not remote.cmd_avail("qstat"):
-            raise Exception("Command 'qstat' not available in remote '%s'." % self.remote.name)
+            raise Exception("Command 'qstat' not available in remote '%s'." % remote.name)
         awk = "awk 'match($0,/[0-9]+/){print substr($0, RSTART, RLENGTH)}'"
         output = remote.command("qstat | %s" % awk, timeout=60)
         job_ids  = [jid.rstrip() for jid in output]
@@ -469,7 +499,7 @@ class StudyManager(MessagePrinter):
     def download(self, remote, force=False):
         remote_studydir = os.path.join(remote.workdir, self.study.name)
         if not remote.remote_dir_exists(remote_studydir):
-            raise Exception("Study '%s' does not exists in remote '%s'." % (self.study_name, self.remote.name))
+            raise Exception("Study '%s' does not exists in remote '%s'." % (self.study_name, remote.name))
         compress_dirs = ""
         cases_regexp = self._cases_regexp()
         for path in self.study.param_file["DOWNLOAD"]:
