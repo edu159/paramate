@@ -482,11 +482,18 @@ def download_action(args):
     allowed_states = ["SUBMITTED", "FINISHED"]
     def action_func_download(study_manager, remote):
         return study_manager.download(remote, force=args.force)
-
     def output_handler_download(output, valid):
        pass 
     state_action(args, action, allowed_states, action_func_download, output_handler_download)
 
+def delete_jobs_action(args):
+    action = "delete-jobs"
+    allowed_states = ["SUBMITTED"]
+    def action_func_delete_jobs(study_manager, remote):
+        return study_manager.delete_jobs(remote)
+    def output_handler_delete_jobs(output, valid):
+       pass 
+    state_action(args, action, allowed_states, action_func_delete_jobs, output_handler_delete_jobs)
 
 def state_action(args, action, allowed_states, action_func, output_handler):
     study_path = os.path.abspath('.')
@@ -620,12 +627,12 @@ def main(args=None):
     parser_status.add_argument('-r', '--remote', type=str, help="Remote name.")
     parser_status.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
 
-    # # Parser delete-jobs
-    # parser_upload = subparsers.add_parser('status-jobs', help="Submit study remotely/localy.")
-    # parser_upload.set_defaults(func=submit_action)
-    # parser_upload.add_argument('-s', '--selector', type=str, help="Case selector.")
-    # parser_upload.add_argument('-r', '--remote', type=str, help="Remote name.")
-    # parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
+    # Parser delete-jobs
+    parser_upload = subparsers.add_parser('delete-jobs', help="Delete jobs associated with cases.")
+    parser_upload.set_defaults(func=delete_jobs_action)
+    parser_upload.add_argument('-s', '--selector', type=str, help="Case selector.")
+    parser_upload.add_argument('-r', '--remote', type=str, help="Remote name.")
+    parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
  
     # Parser download 
     parser_download = subparsers.add_parser('download', help="download study to remote.")

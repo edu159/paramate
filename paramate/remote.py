@@ -534,9 +534,7 @@ class StudyManager(MessagePrinter):
         awk = "awk 'match($0,/[0-9]+/){print substr($0, RSTART, RLENGTH)}'"
         output = remote.command("qstat | %s" % awk, timeout=60)
         job_ids  = [jid.rstrip() for jid in output]
-        # print "job_ids:", job_ids
         output = remote.command("qstat", timeout=60)
-        # print "output:", output 
         selected_cases_idx = [case.job_id for case in self.study.case_selection]
         filter_idx = [job_ids.index(jid) for jid in job_ids if jid in selected_cases_idx]
         header_lines = 2
@@ -545,8 +543,16 @@ class StudyManager(MessagePrinter):
         filtered_output.insert(1, output[1])
         return filtered_output
 
-
-
+    def delete_jobs(self, remote):
+        if not remote.cmd_avail("qdel"):
+            raise Exception("Command 'qdel' not available in remote '%s'." % remote.name)
+        jobid_list_str = " ".join([c.job_id for c in self.study.case_selection])
+        print "jobids:", jobid_list_str
+        output = remote.command("qdel {}".format(jobid_list_str), timeout=60)
+        # TODO: wait for deletetion using looping status()
+        for case in self.study.case_selection:
+            case.status = "DELETED"
+        self.study.save()
 
     def download(self, remote, force=False):
         remote_studydir = os.path.join(remote.workdir, self.study.name)
