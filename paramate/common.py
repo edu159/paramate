@@ -81,6 +81,7 @@ class MessagePrinter(object):
                          "warning": color.Fore.YELLOW,
                          "error": color.Fore.RED,
                          "input": color.Fore.CYAN,
+                         "blank": color.Fore.WHITE,
                          "unformated": None
                          }
     #Logic: a) --quiet option can be ignored.
@@ -91,7 +92,12 @@ class MessagePrinter(object):
         if msg_type == "unformated":
             formatted_msg = message
         else:
-            formatted_msg = self.colormap[msg_type] + "[ " + msg_type.capitalize().center(max_len) + " ] " + color.Fore.WHITE +  message + color.Fore.RESET
+            # Do not show Blank string
+            if msg_type != "blank":
+                msg_type_str = msg_type.capitalize()
+            else:
+                msg_type_str = ""
+            formatted_msg = self.colormap[msg_type] + "[ " + msg_type_str.center(max_len) + " ] " + color.Fore.WHITE +  message + color.Fore.RESET
         if not self.quiet:
             if verbose:
                 if self.verbose:

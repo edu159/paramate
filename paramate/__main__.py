@@ -280,7 +280,7 @@ def connect(remote, debug=False, show_progress_bar=False):
         try:
             passwd = None
             if remote.password_ask:
-                _printer.print_msg("Password(%s): " % remote.name , "input", end='')
+                _printer.print_msg("Password (%s): " % remote.name , "input", end='')
                 passwd = getpass.getpass("")
             if show_progress_bar:
                 progress_bar = ProgressBar()
@@ -290,11 +290,12 @@ def connect(remote, debug=False, show_progress_bar=False):
         except Exception as error:
             attempts += 1
             if attempts < 3 and remote.password_ask:
+                _printer.print_msg("Authentication failed", "warning")
                 continue
             if debug:
                 raise
             else:
-                _printer.print_msg(str(error), "error")
+                _printer.print_msg(str(error).rstrip('.') + " (3 attempts)", "error")
                 _printer.print_msg("Aborting...", "error")
                 sys.exit()
         break
@@ -407,11 +408,87 @@ def clean_action(args):
         else:
             sys.exit("Error: " + str(error))
 
+def get_cases_byremote(cases_idx, study, allowed_states, remote=None):
+    cases_remote = study.get_cases(cases_idx, "id", sortby="remote")
+    no_remote_cases = cases_remote.pop(None, None)
+    ret_info = {}
+    state_list = ["CREATED", "UPLOADED", "SUBMITTED", "FINISHED", "DELETED", "DOWNLOADED"]
+    remotes = []
+    if remote is None:
+        remotes = cases_remote.keys()
+    else:
+        if "CREATED" in allowed_states:
+            if no_remote_cases is not None:
+                try:
+                    cases_remote[remote].extend(no_remote_cases)
+                except KeyError:
+                    cases_remote[remote] = no_remote_cases
+                remotes = [remote]
+        else:
+            remotes = [remote]
 
-#NOTES: 1) Only cases in the CREATED state are uploaded by default.
-#       2) Report selected ones which are in SUBMITTED, DOWNLOADED, FINISHED and UPLOADED state.
-#       3) If --force is used all selected cases will be (re-)uploaded and STATE=UPLOADED
+    for r in remotes:
+        ret_info[r] =  {"nof_selected": len(cases_remote[r]), "nof_valid": 0, "cases": {}, "valid_cases": []}
+        for state in state_list:
+            cases = list(set(study.get_cases([state], "status")).intersection(set(cases_remote[r])))
+            ret_info[r]["cases"][state] = {"nof": len(cases), "list": cases}
+            if state in allowed_states:
+                ret_info[r]["valid_cases"].extend(cases)
+
+        ret_info[r]["nof_valid"] = len(ret_info[r]["valid_cases"])
+
+    return ret_info 
+
+def status_action(args):
+    action = "status"
+    allowed_states = ["SUBMITTED"]
+    def action_func_status(study_manager, remote):
+        return study_manager.status(remote)
+
+    def output_handler_status(output, valid):
+        if valid:
+            _printer.print_msg("")
+            for l in output:
+                _printer.print_msg("\t" + l,end='')
+        else:
+            _printer.print_msg("No running jobs.", "info")
+    state_action(args, action, allowed_states, action_func_status, output_handler_status)
+
+def submit_action(args):
+    action = "submit-jobs"
+    allowed_states = ["UPLOADED"]
+    def action_func_submit(study_manager, remote):
+        return study_manager.submit(remote, force=args.force, array_job=args.array_job)
+
+    def output_handler_submit(output, valid):
+        if valid:
+            pass
+        else:
+            pass
+    state_action(args, action, allowed_states, action_func_submit, output_handler_submit)
+
 def upload_action(args):
+    action = "upload"
+    allowed_states = ["CREATED"]
+    def action_func_upload(study_manager, remote):
+        return study_manager.upload(remote, array_job=args.array_job, force=args.force)
+
+    def output_handler_upload(output, valid):
+       pass 
+    state_action(args, action, allowed_states, action_func_upload, output_handler_upload)
+
+def download_action(args):
+    action = "download"
+    allowed_states = ["SUBMITTED", "FINISHED"]
+    def action_func_download(study_manager, remote):
+        return study_manager.download(remote, force=args.force)
+
+    def output_handler_download(output, valid):
+       pass 
+    state_action(args, action, allowed_states, action_func_download, output_handler_download)
+
+
+def state_action(args, action, allowed_states, action_func, output_handler):
     study_path = os.path.abspath('.')
     study_name = os.path.basename(study_path)
     study = Study(study_name, study_path)
@@ -422,30 +499,45 @@ def upload_action(args):
         case_selector = args.selector
     cases_idx = decode_case_selector(case_selector, study.nof_cases)
     study.set_selection(cases_idx)
-    _printer.print_msg("Selected %d cases to upload" % len(cases_idx), "info")
-    no_upload_cases = study.get_cases(["UPLOADED", "FINISHED", "SUBMITTED", "DOWNLOADED"], "status")
-    # no_upload_cases = list(set(study.case_selection).intersection(set(no_upload_cases)))
-    if no_upload_cases:
-        if not args.force:
-            _printer.print_msg("%d selected cases has been already uploaded and will be *ignored*." % len(no_upload_cases), "info")
-        else:
-            _printer.print_msg("%d selected cases has been already uploaded and will be *overwritten*."  % len(no_upload_cases), "warning")
-    if args.yes:
-        opt = 'Y'
+    remote_cases = get_cases_byremote(cases_idx, study, allowed_states, remote=args.remote)
+    if args.remote is not None:
+        nof_remotes = 1
     else:
-        _printer.print_msg("Continue?['Y','y']:", "input", end='')
-        opt = raw_input("")
-    if opt in ['y', 'Y']:
-        r = opts_get_remote(study_path, args.remote)
-        if not args.force:
-            upload_cases = set(study.case_selection) - set(no_upload_cases)
-            upload_cases_idx = [c.id for c in upload_cases]
-            study.set_selection(upload_cases_idx)
-        _printer.print_msg("Uploading %d cases to remote '%s'..." % (len(study.case_selection), r.name), "info")
+        nof_remotes = len(remote_cases.keys())
+    _printer.print_msg("Selected {} cases ({} remotes) for action: '{}'...".format(len(cases_idx), nof_remotes,  action), "info")
+    for counter, (remote_name, remote_info) in enumerate(remote_cases.items()):
+        _printer.print_msg("\t[{}] '{}': {} cases selected".format(counter+1, remote_name, remote_info["nof_selected"]), "info")
+        for status, case_info  in remote_info["cases"].items():
+            if case_info["nof"] > 0:
+                _printer.print_msg("\t\t{}: {}".format(status, case_info["nof"]))
+        nof_excluded_cases = remote_info["nof_selected"] - remote_info["nof_valid"]
+        if nof_excluded_cases > 0:
+            _printer.print_msg("\t\tFound {} cases with a state not in {}. They will be ignored.".format(nof_excluded_cases, allowed_states))
+    # Iterate over remotes
+    for remote_name, remote_info in remote_cases.items():
+        if remote_info["nof_valid"] == 0:
+            continue
+        # Continue to the next remote if there are not cases to download
+        study.set_selection(remote_info["valid_cases"])
+        _printer.print_msg("", "blank")
+        remote_header = "[{}: '{}']".format(action.capitalize(), remote_name)
+        _printer.print_msg(remote_header, "info")
+        r = opts_get_remote(study_path, remote_name)
         connect(r, debug=args.debug, show_progress_bar=True)
         sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
         try:
-            sm.upload(r, array_job=args.array_job, force=args.force)
+            # The update affect all cases not only the selection
+            sm.update_status(r)
+            remote_cases_updated = get_cases_byremote(cases_idx, study, allowed_states, remote=remote_name)
+            valid_cases = remote_cases_updated[remote_name]["valid_cases"]
+            output = ""
+            if valid_cases:
+                _printer.print_msg("Performing action '{}' on {} cases...".format(action, len(valid_cases)), "info")
+                study.set_selection(valid_cases)
+                output = action_func(sm, r)
+                output_handler(output, valid=True)
+            else:
+                output_handler(output, valid=False)
         except Exception as error:
             if args.debug:
                 raise
@@ -454,130 +546,11 @@ def upload_action(args):
                 _printer.print_msg(str(error), "error")
                 sys.exit()
         r.close()
-
-#NOTES: 1) Cases that have not been uploaded to a remote are ignored from the selected ones.
-#       2) Cases in UPLOADED and DOWNLOADED state are not downloaded either.
-#       3) If --force is used all selected cases will be downloaded and local files/directories overwritten.
-
-def download_action(args):
-    study_path = os.path.abspath('.')
-    study_name = os.path.basename(study_path)
-    study = Study(study_name, study_path)
-    study.load()
-    if args.selector is None:
-        case_selector = "*"
-    else:
-        case_selector = args.selector
-    cases_idx = decode_case_selector(case_selector, study.nof_cases)
-    study.set_selection(cases_idx)
-    cases_remote = study.get_cases(cases_idx, "id", sortby="remote")
-    _printer.print_msg("Selected %d cases to download" % len(cases_idx), "info")
-    no_remote_cases = cases_remote.pop(None, None)
-    #TODO: Add force option
-    if no_remote_cases is not None:
-        _printer.print_msg("%d selected cases has not been uploaded yet and will be ignored." % len(no_remote_cases), "info")
-    nof_remote_downloads = {}
-    for remote_name, remote_cases in cases_remote.items():
-        ucases = set(study.get_cases(["UPLOADED"], "status"))
-        nof_uploaded = len(set(remote_cases).intersection(set(ucases)))  
-        dcases = set(study.get_cases(["DOWNLOADED"], "status"))
-        nof_downloaded = len(set(remote_cases).intersection(set(dcases)))  
-        _printer.print_msg("  -'%s': %d cases (Info: %d downloaded, %d not submitted)" % (remote_name,\
-                len(remote_cases), nof_downloaded, nof_uploaded), "info")
-        if args.force:
-            nof_remote_downloads.update({remote_name: len(remote_cases)})
-        else:
-            nof_remote_downloads.update({remote_name: len(remote_cases) - (nof_downloaded + nof_uploaded)})
-    if args.yes:
-        opt = 'Y'
-    else:
-        _printer.print_msg("Continue?['Y','y']:", "input", end='')
-        opt = raw_input("")
-    if opt in ['y', 'Y']:
-        for remote_name, remote_cases in cases_remote.items():
-            r = opts_get_remote(study_path, remote_name)
-            _printer.print_msg("Downloading %d cases from remote '%s'..." % (nof_remote_downloads[remote_name], remote_name), "info")
-            # Continue to the next remote if there are not cases to download
-            if nof_remote_downloads[remote_name] == 0:
-                continue
-            connect(r, debug=args.debug, show_progress_bar=True)
-            sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
-            try:
-                # Force to download even not submitted cases
-                if not args.force:
-                    sm.update_status(r)
-                    # Get cases in remote and "FINISHED" from the selection
-                    fcases = set(study.get_cases(["FINISHED"], "status"))
-                    new_selection = set(study.case_selection).intersection(remote_cases, fcases)
-                else:
-                    new_selection = remote_cases
-                new_selection_idx = [c.id for c in new_selection]
-                study.set_selection(new_selection_idx)
-                sm.download(r, force=args.force)
-            except Exception as error:
-                if args.debug:
-                    raise
-                else:
-                    r.close()
-                    _printer.print_msg(str(error), "error")
-                    sys.exit()
-            r.close()
-        _printer.print_msg("Done.", "info")
-
-def submit_action(args):
-    study_path = os.path.abspath('.')
-    study_name = os.path.basename(study_path)
-    study = Study(study_name, study_path)
-    study.load()
-    if args.selector is None:
-        case_selector = "*"
-    else:
-        case_selector = args.selector
-    cases_idx = decode_case_selector(case_selector, study.nof_cases)
-    study.set_selection(cases_idx)
-    cases_remote = study.get_cases(cases_idx, "id", sortby="remote")
-    print "[Selected %d cases to submit]" % len(cases_idx)
-    no_remote_cases = cases_remote.pop(None, None)
-    if no_remote_cases is not None:
-        print "Warning: %d selected cases has not been uploaded yet to a remote. Ignoring them..." % len(no_remote_cases)
-    nof_remote_submit = {}
-    for remote_name, remote_cases in cases_remote.items():
-        acases = set(study.get_cases(["FINISHED", "SUBMITTED", "DOWNLOADED"], "status"))
-        nof_not_available = len(set(remote_cases).intersection(set(acases)))
-        if nof_not_available == len(remote_cases):
-            print "  -'%s': %d cases (Warning: No cases available to submit)" % (remote_name, len(remote_cases))
-            continue
-        elif nof_not_available == 0:
-            print "  -'%s': %d cases." % (remote_name, len(remote_cases))
-        else:
-            print "  -'%s': %d cases (Warning: %d cases not available to submit.)"\
-                  % (remote_name, len(remote_cases), nof_not_available)
-        nof_remote_submit.update({remote_name: len(remote_cases) - nof_not_available})
-    if nof_remote_submit:
-        opt = raw_input("Continue?['Y','y']:")
-    else:
-        opt = "no"
-    if opt in ['y', 'Y']:
-        for remote_name, remote_cases in cases_remote.items():
-            r = opts_get_remote(study_path, remote_name)
-            print remote_name
-            print "Submitting %d cases to remote '%s'..." % (nof_remote_submit[remote_name], remote_name)
-            connect(r, debug=args.debug)
-            sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
-            try:
-                # Get cases in remote and "FINISHED" from the selection
-                fcases = set(study.get_cases(["UPLOADED"], "status"))
-                new_selection = set(study.case_selection).intersection(remote_cases, fcases)
-                new_selection_idx = [c.id for c in new_selection]
-                study.set_selection(new_selection_idx)
-                sm.submit(r, force=args.force, array_job=args.array_job)
-            except Exception as error:
-                if args.debug:
-                    raise
-                else:
-                    r.close()
-                    sys.exit("Error:" + str(error))
-            r.close()
+        _printer.print_msg("", "blank")
+    if sum([r["nof_valid"] for r in remote_cases.values()]) == 0:
+            _printer.print_msg("Nothing to do for action: '{}'.".format(action), "info")
+    _printer.print_msg("Done.", "info")
+ 
 
 def main(args=None):
     """The main routine."""
@@ -634,25 +607,25 @@ def main(args=None):
     parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
     
     # Parser submit-jobs
-    parser_upload = subparsers.add_parser('submit-jobs', help="Submit study remotely/localy.")
-    parser_upload.set_defaults(func=submit_action)
-    parser_upload.add_argument('-s', '--selector', type=str, help="Case selector.")
-    parser_upload.add_argument('-r', '--remote', type=str, help="Remote name.")
-    parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
+    parser_submit = subparsers.add_parser('submit-jobs', help="Submit study remotely/localy.")
+    parser_submit.set_defaults(func=submit_action)
+    parser_submit.add_argument('-s', '--selector', type=str, help="Case selector.")
+    parser_submit.add_argument('-r', '--remote', type=str, help="Remote name.")
+    parser_submit.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
 
     # Parser status-jobs
-    parser_upload = subparsers.add_parser('status-jobs', help="Submit study remotely/localy.")
-    parser_upload.set_defaults(func=submit_action)
-    parser_upload.add_argument('-s', '--selector', type=str, help="Case selector.")
-    parser_upload.add_argument('-r', '--remote', type=str, help="Remote name.")
-    parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
+    parser_status = subparsers.add_parser('status-jobs', help="Query job status.")
+    parser_status.set_defaults(func=status_action)
+    parser_status.add_argument('-s', '--selector', type=str, help="Case selector.")
+    parser_status.add_argument('-r', '--remote', type=str, help="Remote name.")
+    parser_status.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
 
-    # Parser delete-jobs
-    parser_upload = subparsers.add_parser('status-jobs', help="Submit study remotely/localy.")
-    parser_upload.set_defaults(func=submit_action)
-    parser_upload.add_argument('-s', '--selector', type=str, help="Case selector.")
-    parser_upload.add_argument('-r', '--remote', type=str, help="Remote name.")
-    parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
+    # # Parser delete-jobs
+    # parser_upload = subparsers.add_parser('status-jobs', help="Submit study remotely/localy.")
+    # parser_upload.set_defaults(func=submit_action)
+    # parser_upload.add_argument('-s', '--selector', type=str, help="Case selector.")
+    # parser_upload.add_argument('-r', '--remote', type=str, help="Remote name.")
+    # parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
  
     # Parser download 
     parser_download = subparsers.add_parser('download', help="download study to remote.")
@@ -664,18 +637,9 @@ def main(args=None):
     parser_download.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
     
     # actions_group.add_argument("--check", action="store_true", help="Check if the study is consistent with 'params.yaml' file.")
-    # actions_group.add_argument("--create", metavar="study_name", help="Create an empty study template.")
-    # actions_group.add_argument("--generate", nargs="?", metavar="study_name", const=".", help="Generate the instances of the study based on the 'params.yaml' file.")
     # actions_group.add_argument("--init-remote", nargs="?", metavar="remote_name", const="default", help="Get a resumed info of the study.")
     actions_group.add_argument("--info", action="store_true", help="Get a resumed info of the study.")
-    # actions_group.add_argument("--clean", nargs="?", metavar="cases_list", const='*', help="Clean the instances of a study.")
-    # actions_group.add_argument("--delete", action="store_true", help="Delete all the instances of a study.")
-    # actions_group.add_argument("--upload", nargs="?", const="*", metavar="study_name", help="Upload study to remote.")
-    actions_group.add_argument("--download", nargs="?", const="*", metavar="study_name", help="Download study from remote.")
 
-    actions_group.add_argument("--qstatus", nargs="?", const="*", metavar="study_name", help="Download study from remote.")
-    actions_group.add_argument("--qdelete", nargs="?", const="*", metavar="study_name", help="Download study from remote.")
-    actions_group.add_argument("--qsubmit", nargs="?", const="*", metavar="study_name", help="Download study from remote.")
     # Actions modifiers
     parser.add_argument("--cases", default='*', metavar="case_indices", nargs="?", const="*", help="Case selector.")
     parser.add_argument("--array-job", action="store_true", default=False, help="Submit the study as a array of jobs.")
@@ -686,134 +650,6 @@ def main(args=None):
     global _printer
     _printer = MessagePrinter(verbose=args.verbose, quiet=args.quiet)
     args.func(args)
-
-
-                
-    if args.qsubmit:
-        study_path = os.path.abspath('.')
-        study_name = os.path.basename(study_path)
-        study = Study(study_name, study_path)
-        study.load()
-        case_selector = args.qsubmit
-        cases_idx = decode_case_selector(case_selector, study.nof_cases)
-        study.set_selection(cases_idx)
-        cases_remote = study.get_cases(cases_idx, "id", sortby="remote")
-        print "[Selected %d cases to submit]" % len(cases_idx)
-        no_remote_cases = cases_remote.pop(None, None)
-        if no_remote_cases is not None:
-            print "Warning: %d selected cases has not been uploaded yet to a remote. Ignoring them..." % len(no_remote_cases)
-        nof_remote_submit = {}
-        for remote_name, remote_cases in cases_remote.items():
-            acases = set(study.get_cases(["FINISHED", "SUBMITTED", "DOWNLOADED"], "status"))
-            nof_not_available = len(set(remote_cases).intersection(set(acases)))
-            if nof_not_available == len(remote_cases):
-                print "  -'%s': %d cases (Warning: No cases available to submit)" % (remote_name, len(remote_cases))
-                continue
-            elif nof_not_available == 0:
-                print "  -'%s': %d cases." % (remote_name, len(remote_cases))
-            else:
-                print "  -'%s': %d cases (Warning: %d cases not available to submit.)"\
-                      % (remote_name, len(remote_cases), nof_not_available)
-            nof_remote_submit.update({remote_name: len(remote_cases) - nof_not_available})
-        if nof_remote_submit:
-            opt = raw_input("Continue?['Y','y']:")
-        else:
-            opt = "no"
-        if opt in ['y', 'Y']:
-            for remote_name, remote_cases in cases_remote.items():
-                r = opts_get_remote(study_path, remote_name)
-                print remote_name
-                print "Submitting %d cases to remote '%s'..." % (nof_remote_submit[remote_name], remote_name)
-                connect(r, debug=args.debug)
-                sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
-                try:
-                    # Get cases in remote and "FINISHED" from the selection
-                    fcases = set(study.get_cases(["UPLOADED"], "status"))
-                    new_selection = set(study.case_selection).intersection(remote_cases, fcases)
-                    new_selection_idx = [c.id for c in new_selection]
-                    study.set_selection(new_selection_idx)
-                    sm.submit(r, force=args.force, array_job=args.array_job)
-                except Exception as error:
-                    if args.debug:
-                        raise
-                    else:
-                        r.close()
-                        sys.exit("Error:" + str(error))
-                r.close()
-
-
-
-
-    # elif args.submit_case:
-    #     abs_remote_path = os.path.abspath(args.submit_case)
-    #     r = opts_get_remote(os.path.dirname(abs_remote_path), args)
-    #     if r.available():
-    #         passwd = getpass.getpass("Password: ")
-    #     else:
-    #         sys.exit("Error: Remote '%s' not available." % r.name)
-    #     try:
-    #         r.connect(passwd)
-    #     except Exception as error:
-    #         sys.exit(error)
-    #     sm = remote.StudyManager(r, case_path=abs_remote_path)
-    #     try:
-    #         sm.submit_case()
-    #     except Exception as error:
-    #         r.close()
-    #         sys.exit(error)
-    #     r.close()
-    #
-
-
-
-
-
-            # raise Exception("File 'cases.info' is empty. Cannot download case.")
-
-    # elif args.upload_case:
-    #     abs_remote_path = os.path.abspath(args.upload_case)
-    #     r = opts_get_remote(os.path.dirname(abs_remote_path), args)
-    #     if r.available():
-    #         passwd = getpass.getpass("Password: ")
-    #     else:
-    #         sys.exit("Error: Remote '%s' not available." % r.name)
-    #     try:
-    #         r.connect(passwd)
-    #     except Exception as error:
-    #         sys.exit(error)
-    #     sm = remote.StudyManager(r, case_path=abs_remote_path)
-    #     try:
-    #         sm.upload_case(force=args.force)
-    #     except Exception as error:
-    #         r.close()
-    #         sys.exit(error)
-    #     r.close()
-    #
-
-
-    elif args.qstatus:
-        c = Case()
-        print c["id"]
-
-        # abs_remote_path = os.path.abspath(args.status)
-        # r = opts_get_remote(abs_remote_path, args)
-        # if r.available():
-        #     passwd = getpass.getpass("Password: ")
-        # else:
-        #     sys.exit("Error: Remote '%s' not available." % r.name)
-        # try:
-        #     r.connect(passwd)
-        # except Exception as error:
-        #     sys.exit(error)
-        # sm = remote.StudyManager(r, study_path=abs_remote_path)
-        # sm.update_status()
-        # # try:
-        # #     sm.status()
-        # # except Exception as error:
-        # #     r.close()
-        # #     sys.exit(error)
-        # r.close()
-
 
 if __name__ == "__main__":
     main()

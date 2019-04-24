@@ -62,17 +62,41 @@ class CommandExecuter:
                 break
             else:
                 # get rid of 'coloring and formatting' special characters
-                shout.append(re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]').sub('', line).
-                             replace('\b', '').replace('\r', ''))
+                # print "----"
+                # print repr(line)
+                 
+                line2 = re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]').sub('', line)
+                # print repr(line2)
+                line3 = line2.replace('\b', '').replace(' \r', '').replace('\r', '')
+                # print repr(line3)
+                shout.append(line3)
+                # print repr(shout[-1])
+                # print "----"
+        # from difflib import SequenceMatcher
+        # def similar(a, b):
+        #         return SequenceMatcher(None, a, b).ratio()
 
         # first and last lines of shout/sherr contain a prompt
+        # if shout and echo_cmd in shout[-1]:
+        # print ""
+        # print "shout:", shout, len(shout)
+        # print "shout[0]:", "'{}'".format(shout[0]), "'{}'".format(cmd), similar(str(shout[0]), str(cmd))
+        # print "shout[-1]:", "'{}'".format(shout[-1]), "'{}'".format(echo_cmd),similar(str(shout[-1]), str(echo_cmd)) 
+        # if shout and similar(echo_cmd, shout[-1]) > 0.8:
         if shout and echo_cmd in shout[-1]:
             shout.pop()
+            # print "entro echo_cmd"
         if shout and cmd in shout[0]:
+        # if shout and similar(cmd, shout[0]) >0.8:
             shout.pop(0)
-        if sherr and echo_cmd in sherr[-1]:
+            # print "entro cmd"
+        # print "shout after:", shout
+        # print ""
+        # if sherr and echo_cmd in sherr[-1]:
+        if sherr:
             sherr.pop()
-        if sherr and cmd in sherr[0]:
+        # if sherr and cmd in sherr[0]:
+        if sherr:
             sherr.pop(0)
 
         return shin, shout, sherr, exit_status
@@ -86,7 +110,7 @@ class ConnectionTimeout(Exception):
 
 class Remote(MessagePrinter):
     def __init__(self, name="", workdir=None, addr=None,\
-            port=22, username=None, ssh_key='', shell="bash",\
+            port=22, username=None, ssh_key=None, shell="bash",\
             password_ask=True, quiet=False, verbose=False):
         super(Remote, self).__init__(quiet, verbose)
         self.name = name
@@ -253,23 +277,31 @@ class Remote(MessagePrinter):
     def connect(self, passwd=None, timeout=None, progress_callback=None):
         self._progress_callback = progress_callback
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        self.ssh.connect(self.addr, port=self.port, timeout=timeout, username=self.username,\
+        self.ssh.connect(self.addr, port=self.port, password=passwd, timeout=timeout, username=self.username,\
                          key_filename=self.ssh_key)
         self.scp = SCPClient(self.ssh.get_transport(), socket_timeout=60.0, progress=self._progress_callback)
         self.cmd = CommandExecuter(self.ssh)
 
+    # def command(self, cmd, timeout=None, fail_on_error=True):
+    #     stdin, stdout, stderr = self.ssh.exec_command(cmd, timeout=timeout)
+    #     self.command_status = stdout.channel.recv_exit_status()
+    #     self.command_status = stdout.channel.recv_exit_status()
+    #     if fail_on_error:
+    #         if self.command_status != 0:
+    #             error = stderr.readlines()
+    #             raise CmdExecutionError("".join([l for l in error if l]))
+    #     print stdin.readlines(), stdout.readlines(), stderr.readlines()
+    #     return stdout.readlines()
+
+
+
     def command(self, cmd, timeout=None, fail_on_error=True):
         stdin, stdout, stderr, exit_status = self.cmd.exec_command(cmd) #, timeout=timeout)
-        self.command_status = exit_status #stdout.channel.recv_exit_status()
-        # stdin, stdout, stderr = self.ssh.exec_command(cmd, timeout=timeout)
-        # self.command_status = stdout.channel.recv_exit_status()
+        self.command_status = exit_status
         if fail_on_error:
             if self.command_status != 0:
-                # error = stderr.readlines()
                 error = stderr
                 raise CmdExecutionError("".join([l for l in error if l]))
-        # print "lines:" , stdout.readlines()
-        # return stdout.readlines()
         return stdout
 
     def cmd_avail(self, cmd_name): 
@@ -490,10 +522,30 @@ class StudyManager(MessagePrinter):
         awk = "awk 'match($0,/[0-9]+/){print substr($0, RSTART, RLENGTH)}'"
         output = remote.command("qstat | %s" % awk, timeout=60)
         job_ids  = [jid.rstrip() for jid in output]
-        for case in self.study.case_selection:
-            if not (case.id in job_ids) and case.status == "SUBMITTED":
+        remote_case_list = self.study.get_cases([remote.name], "remote")
+        for case in remote_case_list:
+            if not (case.job_id in job_ids) and case.status == "SUBMITTED":
                 case.status = "FINISHED"
         self.study.save()
+
+    def status(self, remote):
+        if not remote.cmd_avail("qstat"):
+            raise Exception("Command 'qstat' not available in remote '%s'." % remote.name)
+        awk = "awk 'match($0,/[0-9]+/){print substr($0, RSTART, RLENGTH)}'"
+        output = remote.command("qstat | %s" % awk, timeout=60)
+        job_ids  = [jid.rstrip() for jid in output]
+        # print "job_ids:", job_ids
+        output = remote.command("qstat", timeout=60)
+        # print "output:", output 
+        selected_cases_idx = [case.job_id for case in self.study.case_selection]
+        filter_idx = [job_ids.index(jid) for jid in job_ids if jid in selected_cases_idx]
+        header_lines = 2
+        filtered_output = [output[j+header_lines] for j in filter_idx]
+        filtered_output.insert(0, output[0])
+        filtered_output.insert(1, output[1])
+        return filtered_output
+
+
 
 
     def download(self, remote, force=False):

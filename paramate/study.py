@@ -42,7 +42,6 @@ class Study:
 
              
     def sort_by_param(self, case_list_in, param):
-        import copy
         case_list = list(case_list_in)
         for index in range(1,len(case_list)):
             current_case = case_list[index]
@@ -55,12 +54,16 @@ class Study:
         return case_list
 
 
-    def get_cases(self, search_vals, field, sortby=None):
+    def get_cases(self, search_vals, field, sortby=None, selection_on=True):
+        if selection_on:
+            cases_list = self.case_selection
+        else:
+            cases_list = self.cases
         if sortby == None:
             match_list = []
         else:
             match_list = {}
-        for case in self.case_selection:
+        for case in cases_list:
             if case[field] in search_vals:
                 if sortby == None:
                     match_list.append(case)
@@ -72,10 +75,14 @@ class Study:
                         match_list[case[sortby]].append(case)
         return match_list
 
-    def get_cases_byparams(self, params, mode="all"):
+    def get_cases_byparams(self, params, mode="all", selection_on=True):
+        if selection_on:
+            cases_list = self.case_selection
+        else:
+            cases_list = self.cases
         assert mode == "all" or mode == "one"
         match_list = []
-        for case in self.case_selection:
+        for case in cases_list:
             case_match = False
             if mode == "all":
                 case_match = True
@@ -100,8 +107,13 @@ class Study:
     def save(self):
         self.study_file.save(self.cases)
 
-    def clean(self):
-        for case in self.case_selection:
+    # TODO: Convert into reset
+    def clean(self, selection_on=True):
+        if selection_on:
+            cases_list = self.case_selection
+        else:
+            cases_list = self.cases
+        for case in cases_selection:
             case.reset()
             d = self.param_file.sections["DOWNLOAD"].get_download_paths(case)
             # print d
@@ -110,11 +122,24 @@ class Study:
             # shutil.rmtree()
         self.save()
 
-    def set_selection(self, cases_idx):
-        self.case_selection = self.get_cases(cases_idx, "id")
+    # Accept a list of Case objects or case indices
+    def set_selection(self, cases_list):
+        if cases_list:
+            assert type(cases_list[0]) is int or isinstance(cases_list[0], Case)
+            if isinstance(cases_list[0], Case):
+                cases_idx = [c.id for c in cases_list]
+            else:
+                cases_idx = cases_list
+            self.case_selection = self.get_cases(cases_idx, "id", selection_on=False)
+        else:
+            sel.case_selection = []
 
-    def delete(self):
-        for case in self.case_selection:
+    def delete(self, selection_on=True):
+        if selection_on:
+            cases_list = self.case_selection
+        else:
+            cases_list = self.cases
+        for case in cases_list:
             try:
                 shutil.rmtree(os.path.join(self.path, case["name"]))
             except Exception as error:
