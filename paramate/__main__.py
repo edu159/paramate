@@ -358,17 +358,25 @@ def delete_action(args):
         try:
             study.load()
         except Exception:
-            sys.exit("File 'cases.info' not found. Nothing to delete.")
-        _printer.print_msg("Deleting %d cases..." % study.nof_cases, "info")
-        _printer.print_msg("Deleting study files...", "info")
-        study.delete()
-        _printer.print_msg("Done.", "info")
+            raise Exception("File 'cases.info' not found. Nothing to delete.")
+        _printer.print_msg("Selected %d cases to delete..." % study.nof_cases, "info")
+        if args.yes:
+            opt = 'y'
+        else:
+            _printer.print_msg("Are you sure to delete?[Y,y]: ", "input", end="")
+            opt = raw_input("")
+        if opt in ['y', 'Y']:
+            _printer.print_msg("Deleting study files...", "info")
+            study.delete()
+        else:
+            _printer.print_msg("Delete aborted.", "info")
     except Exception as error:
         if args.debug:
             raise
         else:
             _printer.print_msg(str(error), "error")
             sys.exit()
+    _printer.print_msg("Done.", "info")
 
 def remote_init_action(args):
     remote_name = args.remote
@@ -439,33 +447,42 @@ def get_cases_byremote(cases_idx, study, allowed_states, remote=None):
 
     return ret_info 
 
-def status_action(args):
-    action = "status"
+def job_status_action(args):
+    action = "job-status"
     allowed_states = ["SUBMITTED"]
-    def action_func_status(study_manager, remote):
-        return study_manager.status(remote)
+    def action_func_job_status(study_manager, remote):
+        return study_manager.job_status(remote)
 
-    def output_handler_status(output, valid):
+    def output_handler_job_status(output, valid):
         if valid:
             _printer.print_msg("")
             for l in output:
                 _printer.print_msg("\t" + l,end='')
         else:
             _printer.print_msg("No running jobs.", "info")
-    state_action(args, action, allowed_states, action_func_status, output_handler_status)
+    state_action(args, action, allowed_states, action_func_job_status, output_handler_job_status)
 
-def submit_action(args):
-    action = "submit-jobs"
+def job_submit_action(args):
+    action = "job-submit"
     allowed_states = ["UPLOADED"]
-    def action_func_submit(study_manager, remote):
-        return study_manager.submit(remote, force=args.force, array_job=args.array_job)
+    def action_func_job_submit(study_manager, remote):
+        return study_manager.job_submit(remote, force=args.force, array_job=args.array_job)
 
-    def output_handler_submit(output, valid):
+    def output_handler_job_submit(output, valid):
         if valid:
             pass
         else:
             pass
-    state_action(args, action, allowed_states, action_func_submit, output_handler_submit)
+    state_action(args, action, allowed_states, action_func_job_submit, output_handler_job_submit)
+
+def job_delete_action(args):
+    action = "job-delete"
+    allowed_states = ["SUBMITTED"]
+    def action_func_job_delete(study_manager, remote):
+        return study_manager.job_delete(remote)
+    def output_handler_job_delete(output, valid):
+       pass 
+    state_action(args, action, allowed_states, action_func_job_delete, output_handler_job_delete)
 
 def upload_action(args):
     action = "upload"
@@ -485,15 +502,6 @@ def download_action(args):
     def output_handler_download(output, valid):
        pass 
     state_action(args, action, allowed_states, action_func_download, output_handler_download)
-
-def delete_jobs_action(args):
-    action = "delete-jobs"
-    allowed_states = ["SUBMITTED"]
-    def action_func_delete_jobs(study_manager, remote):
-        return study_manager.delete_jobs(remote)
-    def output_handler_delete_jobs(output, valid):
-       pass 
-    state_action(args, action, allowed_states, action_func_delete_jobs, output_handler_delete_jobs)
 
 def state_action(args, action, allowed_states, action_func, output_handler):
     study_path = os.path.abspath('.')
@@ -567,9 +575,10 @@ def main(args=None):
     color.init()
     parser = argparse.ArgumentParser(description="Program to generate parameter studies.")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("-v", "--verbose", action="store_true", default=False)
-    group.add_argument("-q", "--quiet", action="store_true", default=False)
-    actions_group = parser.add_mutually_exclusive_group()
+    group.add_argument("-v", "--verbose", action="store_true", default=False, help="Verbose mode.")
+    group.add_argument("-q", "--quiet", action="store_true", default=False, help="Quite mode.")
+    parser.add_argument("--debug", action="store_true", default=False, help="Debug mode.")
+    # actions_group = parser.add_mutually_exclusive_group()
     subparsers = parser.add_subparsers(help='sub-command help')
 
     # Subparsers 
@@ -588,23 +597,24 @@ def main(args=None):
     parser_generate.add_argument("--abort-undefined", action="store_false", default=True, help="Abort execution if an undefined parameter is found.")
 
     # Parser print-tree
-    parser_delete = subparsers.add_parser('print-tree', help="Print parameter tree.")
-    parser_delete.set_defaults(func=print_tree_action)
+    parser_print_tree = subparsers.add_parser('print-tree', help="Print parameter tree.")
+    parser_print_tree.set_defaults(func=print_tree_action)
 
     # Parser delete 
     parser_delete = subparsers.add_parser('delete', help="Delete all instances in a study.")
     parser_delete.set_defaults(func=delete_action)
-
-    # Parser init-remote
-    parser_remote_init = subparsers.add_parser('remote-init', help="Get a resumed info of the study.")
-    parser_remote_init.add_argument('-r', '--remote', type=str, help="Remote name.")
-    parser_remote_init.set_defaults(func=remote_init_action)
+    parser_delete.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
 
     # Parser clean
     parser_clean = subparsers.add_parser('clean', help="Clean all instances in a study.")
     parser_clean.set_defaults(func=clean_action)
     parser_clean.add_argument('-c', type=str, help="Case selector.")
 
+    # Parser remote-init
+    parser_remote_init = subparsers.add_parser('remote-init', help="Get a resumed info of the study.")
+    parser_remote_init.add_argument('-r', '--remote', type=str, help="Remote name.")
+    parser_remote_init.set_defaults(func=remote_init_action)
+    
     # Parser upload
     parser_upload = subparsers.add_parser('upload', help="Upload study to remote.")
     parser_upload.set_defaults(func=upload_action)
@@ -612,47 +622,45 @@ def main(args=None):
     parser_upload.add_argument('-r', '--remote', type=str, help="Remote name.")
     parser_upload.add_argument('-f', '--force', action="store_true", help="Force upload. Overwrite files.")
     parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
-    
-    # Parser submit-jobs
-    parser_submit = subparsers.add_parser('submit-jobs', help="Submit study remotely/localy.")
-    parser_submit.set_defaults(func=submit_action)
-    parser_submit.add_argument('-s', '--selector', type=str, help="Case selector.")
-    parser_submit.add_argument('-r', '--remote', type=str, help="Remote name.")
-    parser_submit.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
 
-    # Parser status-jobs
-    parser_status = subparsers.add_parser('status-jobs', help="Query job status.")
-    parser_status.set_defaults(func=status_action)
-    parser_status.add_argument('-s', '--selector', type=str, help="Case selector.")
-    parser_status.add_argument('-r', '--remote', type=str, help="Remote name.")
-    parser_status.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
-
-    # Parser delete-jobs
-    parser_upload = subparsers.add_parser('delete-jobs', help="Delete jobs associated with cases.")
-    parser_upload.set_defaults(func=delete_jobs_action)
-    parser_upload.add_argument('-s', '--selector', type=str, help="Case selector.")
-    parser_upload.add_argument('-r', '--remote', type=str, help="Remote name.")
-    parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
- 
     # Parser download 
     parser_download = subparsers.add_parser('download', help="download study to remote.")
     parser_download.set_defaults(func=download_action)
     parser_download.add_argument('-s', '--selector', type=str, help="Case selector.")
-    # NOTE: In principle this is not necessary as the remote is provided from cases.info
-    # parser_download.add_argument('-r', '--remote', type=str, help="Remote name.")
+    parser_download.add_argument('-r', '--remote', type=str, help="Remote name.")
     parser_download.add_argument('-f', '--force', action="store_true", help="Force download. Overwrite files.")
     parser_download.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
     
+    # Parser job-submit
+    parser_job_submit = subparsers.add_parser('job-submit', help="Submit study remotely/localy.")
+    parser_job_submit.set_defaults(func=job_submit_action)
+    parser_job_submit.add_argument('-s', '--selector', type=str, help="Case selector.")
+    parser_job_submit.add_argument('-r', '--remote', type=str, help="Remote name.")
+    parser_job_submit.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
+
+    # Parser job-status 
+    parser_job_status = subparsers.add_parser('job-status', help="Query job status.")
+    parser_job_status.set_defaults(func=job_status_action)
+    parser_job_status.add_argument('-s', '--selector', type=str, help="Case selector.")
+    parser_job_status.add_argument('-r', '--remote', type=str, help="Remote name.")
+    parser_job_status.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
+
+    # Parser job-delete
+    parser_job_delete = subparsers.add_parser('job-delete', help="Delete jobs associated with cases.")
+    parser_job_delete.set_defaults(func=job_delete_action)
+    parser_job_delete.add_argument('-s', '--selector', type=str, help="Case selector.")
+    parser_job_delete.add_argument('-r', '--remote', type=str, help="Remote name.")
+    parser_job_delete.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
+ 
+       
     # actions_group.add_argument("--check", action="store_true", help="Check if the study is consistent with 'params.yaml' file.")
-    # actions_group.add_argument("--init-remote", nargs="?", metavar="remote_name", const="default", help="Get a resumed info of the study.")
-    actions_group.add_argument("--info", action="store_true", help="Get a resumed info of the study.")
+    # actions_group.add_argument("--info", action="store_true", help="Get a resumed info of the study.")
 
     # Actions modifiers
-    parser.add_argument("--cases", default='*', metavar="case_indices", nargs="?", const="*", help="Case selector.")
-    parser.add_argument("--array-job", action="store_true", default=False, help="Submit the study as a array of jobs.")
-    parser.add_argument("--remote", nargs="?", const=None, metavar="remote_name", help="Specify remote for an action.")
-    parser.add_argument("--force", action="store_true", default=False, help="Specify remote for an action.")
-    parser.add_argument("--debug", action="store_true", default=False, help="Debug mode.")
+    # parser.add_argument("--cases", default='*', metavar="case_indices", nargs="?", const="*", help="Case selector.")
+    # parser.add_argument("--array-job", action="store_true", default=False, help="Submit the study as a array of jobs.")
+    # parser.add_argument("--remote", nargs="?", const=None, metavar="remote_name", help="Specify remote for an action.")
+    # parser.add_argument("--force", action="store_true", default=False, help="Specify remote for an action.")
     args = parser.parse_args()
     global _printer
     _printer = MessagePrinter(verbose=args.verbose, quiet=args.quiet)

@@ -1,23 +1,23 @@
+NOTE: THose three can be solved by saving a compressed file with the vanilla generated study
 1) Fix --clean option by erasing files in the cases.txt and cases.txt itself.
-2) Check that the study-name in the paramp.yaml is the same as the folder name of the study
+2) Implement --check by comparing all the files
 3) Add --copy to ignore downloaded files and copy study and copy from remote.
+
 4) Handle CTRL+C
 5) Add JOB_STATE file to cases to handle restarts. The jobid will change when resubmitting.
 7) Add single value paramas at upload time to fill submit.sh scripts. 
-8) Add md5 HASH to uploads and downloads (is this needed with scp??)
 13) Check integrity of cases.info (Creation date is not in future, remote valid, Status type valid)
 17) Allow expand values after generating case
 18) Allow defining qstat, qsub, qstat custom commands
 23) @gen_list_var and @gen_list_dynamic generators
 
 HIGH PRIORITY:
-6) Ask for confirmation while deleting.
 22) Modifiers system by @param_modifier((path, file1), (path,file2)...)
 11) Select files to be uploaded only once and reference with a variable
 19) Allow working locally (use ssh localhost)
 *) add section-path: ./location  for each section
 *) Check for proper parameter name for dictionary parameters keys.
-*) Support generators on "defaults" section.
+*) Support generators on "defaults" section. (not sure...)
 
 LONG TERM:
 - Testing framework
