@@ -14,12 +14,11 @@ import subprocess
 import json
 import anytree
 from anytree.importer import DictImporter
-from common import replace_placeholders, MessagePrinter, ProgressBar
+from common import replace_placeholders, _printer, ProgressBar
 from study import Study, Case
 from files import ParamInstance
 
 import colorama as color
-_printer = None
 # from __future__ import print_function
 
 SRC_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -56,7 +55,7 @@ def decode_case_selector(selector, nof_cases):
 
 
 
-class StudyGenerator(MessagePrinter, Study):
+class StudyGenerator(Study):
     DEFAULT_DIRECTORIES = ["template/build", "template/input", "template/output", "template/postproc"]
     DEFAULT_FILES = ["template/exec.sh", "template/build.sh", "README", "params.yaml", 
                      "generators.py"] 
@@ -101,7 +100,7 @@ class StudyGenerator(MessagePrinter, Study):
 
     #TODO: Create a file with instance information
     def _create_instance(self, instance_name, instance):
-        self.print_msg("Creating instance '%s'..." % instance_name, verbose=True)
+        _printer.print_msg("Creating instance '%s'..." % instance_name, verbose=True)
         casedir = os.path.join(self.study.path, instance_name)
         studydir = os.path.dirname(casedir)
         shutil.copytree(self.template_path, casedir)
@@ -123,12 +122,12 @@ class StudyGenerator(MessagePrinter, Study):
             replace_placeholders(file_paths, params, self.abort_undefined)
             if not self.build_once:
                 # Force execution permissions to 'build.sh'
-                self.print_msg("Building...", verbose=True, end="")
+                _printer.print_msg("Building...", verbose=True, end="")
                 build_script_path = os.path.join(casedir, "build.sh")
                 os.chmod(build_script_path, stat.S_IXUSR | 
                          stat.S_IMODE(os.lstat(build_script_path).st_mode))
                 self.execute_build_script(build_script_path)
-                self.print_msg("Done.", verbose=True, msg_type="unformated")
+                _printer.print_msg("Done.", verbose=True, msg_type="unformated")
         except Exception:
             if not self.keep_onerror:
                 shutil.rmtree(casedir)
@@ -150,12 +149,12 @@ class StudyGenerator(MessagePrinter, Study):
     def generate_cases(self):
         self._generate_instances()
         # Check if build.sh has to be run before generating the instances
-        self.print_msg("Generating cases...")
+        _printer.print_msg("Generating cases...")
         if not os.path.exists(self.template_path):
             raise Exception("Cannot find 'template' directory!")
         if os.path.exists(self.build_script_path):
             if self.build_once:
-                self.print_msg("Building once from 'build.sh'...")
+                _printer.print_msg("Building once from 'build.sh'...")
                 # Force execution permissions to 'build.sh'
                 os.chmod(self.build_script_path, stat.S_IXUSR | 
                          stat.S_IMODE(os.lstat(self.build_script_path).st_mode))
@@ -174,7 +173,7 @@ class StudyGenerator(MessagePrinter, Study):
             self.study.add_case(instance_name, multival_params, short_name=self.short_name)
 
         self.study.save()
-        self.print_msg("Success: Created %d cases." % nof_instances)
+        _printer.print_msg("Success: Created %d cases." % nof_instances)
 
     def _generate_instances(self):
         instance = ParamInstance()
@@ -453,26 +452,20 @@ def job_status_action(args):
     def action_func_job_status(study_manager, remote):
         return study_manager.job_status(remote)
 
-    def output_handler_job_status(output, valid):
-        if valid:
-            _printer.print_msg("")
-            for l in output:
-                _printer.print_msg("\t" + l,end='')
-        else:
-            _printer.print_msg("No running jobs.", "info")
+    def output_handler_job_status(output):
+        _printer.print_msg("")
+        for l in output:
+            _printer.print_msg(l, end='')
     state_action(args, action, allowed_states, action_func_job_status, output_handler_job_status)
 
 def job_submit_action(args):
     action = "job-submit"
     allowed_states = ["UPLOADED"]
     def action_func_job_submit(study_manager, remote):
-        return study_manager.job_submit(remote, force=args.force, array_job=args.array_job)
+        return study_manager.job_submit(remote, array_job=args.array_job)
 
-    def output_handler_job_submit(output, valid):
-        if valid:
-            pass
-        else:
-            pass
+    def output_handler_job_submit(output):
+        pass
     state_action(args, action, allowed_states, action_func_job_submit, output_handler_job_submit)
 
 def job_delete_action(args):
@@ -480,8 +473,8 @@ def job_delete_action(args):
     allowed_states = ["SUBMITTED"]
     def action_func_job_delete(study_manager, remote):
         return study_manager.job_delete(remote)
-    def output_handler_job_delete(output, valid):
-       pass 
+    def output_handler_job_delete(output):
+        _printer.print_msg("Marked for delete {} cases.".format(output))
     state_action(args, action, allowed_states, action_func_job_delete, output_handler_job_delete)
 
 def upload_action(args):
@@ -490,7 +483,7 @@ def upload_action(args):
     def action_func_upload(study_manager, remote):
         return study_manager.upload(remote, array_job=args.array_job, force=args.force)
 
-    def output_handler_upload(output, valid):
+    def output_handler_upload(output):
        pass 
     state_action(args, action, allowed_states, action_func_upload, output_handler_upload)
 
@@ -499,7 +492,7 @@ def download_action(args):
     allowed_states = ["SUBMITTED", "FINISHED"]
     def action_func_download(study_manager, remote):
         return study_manager.download(remote, force=args.force)
-    def output_handler_download(output, valid):
+    def output_handler_download(output):
        pass 
     state_action(args, action, allowed_states, action_func_download, output_handler_download)
 
@@ -521,22 +514,40 @@ def state_action(args, action, allowed_states, action_func, output_handler):
         nof_remotes = len(remote_cases.keys())
     _printer.print_msg("Selected {} cases ({} remotes) for action: '{}'...".format(len(cases_idx), nof_remotes,  action), "info")
     for counter, (remote_name, remote_info) in enumerate(remote_cases.items()):
-        _printer.print_msg("\t[{}] '{}': {} cases selected".format(counter+1, remote_name, remote_info["nof_selected"]), "info")
+        _printer.indent_level = 1
+        _printer.print_msg("[{}] '{}': {} cases selected".format(counter+1, remote_name, remote_info["nof_selected"]), "info")
         for status, case_info  in remote_info["cases"].items():
             if case_info["nof"] > 0:
-                _printer.print_msg("\t\t{}: {}".format(status, case_info["nof"]))
+                _printer.indent_level = 2
+                _printer.print_msg("{}: {}".format(status, case_info["nof"]))
         nof_excluded_cases = remote_info["nof_selected"] - remote_info["nof_valid"]
         if nof_excluded_cases > 0:
-            _printer.print_msg("\t\tFound {} cases with a state not in {}. They will be ignored.".format(nof_excluded_cases, allowed_states))
+            _printer.print_msg("Found {} cases with a state not in {}. They will be ignored.".format(nof_excluded_cases, allowed_states))
+
+ 
     # Iterate over remotes
     for remote_name, remote_info in remote_cases.items():
+        # If not valid cases to perform action go to next remote
         if remote_info["nof_valid"] == 0:
             continue
         # Continue to the next remote if there are not cases to download
         study.set_selection(remote_info["valid_cases"])
         _printer.print_msg("", "blank")
         remote_header = "[{}: '{}']".format(action.capitalize(), remote_name)
+        _printer.indent_level = 0
         _printer.print_msg(remote_header, "info")
+        _printer.indent_level = 1
+
+        # Ask for confirmation
+        if args.yes:
+            opt = 'y'
+        else:
+            _printer.print_msg("Perform action '{}' on '{}'?[Y,y]: ".format(action, remote_name), "input", end="")
+            opt = raw_input("")
+        if not opt in ['y', 'Y']:
+            _printer.print_msg("Skipping...")
+            _printer.print_msg("", "blank")
+            continue
         r = opts_get_remote(study_path, remote_name)
         connect(r, debug=args.debug, show_progress_bar=True)
         sm = remote.StudyManager(study, quiet=args.quiet, verbose=args.verbose)
@@ -550,18 +561,21 @@ def state_action(args, action, allowed_states, action_func, output_handler):
                 _printer.print_msg("Performing action '{}' on {} cases...".format(action, len(valid_cases)), "info")
                 study.set_selection(valid_cases)
                 output = action_func(sm, r)
-                output_handler(output, valid=True)
+                _printer.indent_level = 2
+                output_handler(output)
             else:
-                output_handler(output, valid=False)
+                _printer.print_msg("No jobs running found. Skipping...")
         except Exception as error:
             if args.debug:
                 raise
             else:
                 r.close()
+                _printer.indent_level = 0
                 _printer.print_msg(str(error), "error")
                 sys.exit()
         r.close()
-        _printer.print_msg("", "blank")
+    _printer.print_msg("", "blank")
+    _printer.indent_level = 0
     if sum([r["nof_valid"] for r in remote_cases.values()]) == 0:
             _printer.print_msg("Nothing to do for action: '{}'.".format(action), "info")
     _printer.print_msg("Done.", "info")
@@ -622,6 +636,7 @@ def main(args=None):
     parser_upload.add_argument('-r', '--remote', type=str, help="Remote name.")
     parser_upload.add_argument('-f', '--force', action="store_true", help="Force upload. Overwrite files.")
     parser_upload.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
+    parser_upload.add_argument("--array-job", action="store_true", default=False, help="Upload to run as a array of jobs.")
 
     # Parser download 
     parser_download = subparsers.add_parser('download', help="download study to remote.")
@@ -637,6 +652,7 @@ def main(args=None):
     parser_job_submit.add_argument('-s', '--selector', type=str, help="Case selector.")
     parser_job_submit.add_argument('-r', '--remote', type=str, help="Remote name.")
     parser_job_submit.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
+    parser_job_submit.add_argument("--array-job", action="store_true", default=False, help="Submit study as a array of jobs.")
 
     # Parser job-status 
     parser_job_status = subparsers.add_parser('job-status', help="Query job status.")
@@ -662,8 +678,7 @@ def main(args=None):
     # parser.add_argument("--remote", nargs="?", const=None, metavar="remote_name", help="Specify remote for an action.")
     # parser.add_argument("--force", action="store_true", default=False, help="Specify remote for an action.")
     args = parser.parse_args()
-    global _printer
-    _printer = MessagePrinter(verbose=args.verbose, quiet=args.quiet)
+    _printer.configure(args.verbose, args.quiet)
     args.func(args)
 
 if __name__ == "__main__":

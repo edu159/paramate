@@ -73,20 +73,30 @@ def replace_placeholders(file_paths, params, warn_undefined=True):
 
 
 class MessagePrinter(object):
-    def __init__(self, quiet, verbose):
-        self.quiet = quiet
-        self.verbose = verbose
-        color.init()
+
+    def __init__(self):
+        # Shared attribute to fix the indentation level
+        self.indent_level = 0
+        self.quiet = False 
+        self.verbose = False 
         self.colormap = {"info": color.Fore.GREEN,
-                         "warning": color.Fore.YELLOW,
-                         "error": color.Fore.RED,
-                         "input": color.Fore.CYAN,
-                         "blank": color.Fore.WHITE,
-                         "unformated": None
-                         }
+                        "warning": color.Fore.YELLOW,
+                        "error": color.Fore.RED,
+                        "input": color.Fore.CYAN,
+                        "blank": color.Fore.WHITE,
+                        "unformated": None
+                       }
+
+    def configure(self, verbose, quiet):
+        self.quiet = quiet
+        self.verbose = verbose 
+        color.init()
+
+    def _indent_spaces(self):
+        return "    " * self.indent_level
+            
     #Logic: a) --quiet option can be ignored.
     #       b) if verbose=True then check --verbose flag 
-            
     def print_msg(self, message, msg_type="info", ignore_quiet=False, verbose=False, end="\n"):
         max_len = max([len(k) for k in self.colormap.keys()])
         if msg_type == "unformated":
@@ -97,7 +107,8 @@ class MessagePrinter(object):
                 msg_type_str = msg_type.capitalize()
             else:
                 msg_type_str = ""
-            formatted_msg = self.colormap[msg_type] + "[ " + msg_type_str.center(max_len) + " ] " + color.Fore.WHITE +  message + color.Fore.RESET
+            indent = self._indent_spaces()
+            formatted_msg = self.colormap[msg_type] + "[ " + msg_type_str.center(max_len) + " ] " + indent + color.Fore.WHITE +  message + color.Fore.RESET
         if not self.quiet:
             if verbose:
                 if self.verbose:
@@ -110,6 +121,8 @@ class MessagePrinter(object):
         sys.stdout.flush()
         sys.stderr.flush()
 
+# Instance of printer, to be configured in __main__
+_printer = MessagePrinter()
 
 class ProgressBar:
     def __init__(self):

@@ -3,6 +3,7 @@ NOTE: THose three can be solved by saving a compressed file with the vanilla gen
 2) Implement --check by comparing all the files
 3) Add --copy to ignore downloaded files and copy study and copy from remote.
 
+3) Check for ssh-key file existance.
 4) Handle CTRL+C
 5) Add JOB_STATE file to cases to handle restarts. The jobid will change when resubmitting.
 7) Add single value paramas at upload time to fill submit.sh scripts. 

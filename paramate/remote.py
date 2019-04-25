@@ -9,7 +9,7 @@ import getpass
 import tarfile
 from scp import SCPClient
 import socket
-from common import replace_placeholders, MessagePrinter
+from common import replace_placeholders, _printer
 import re
 
 
@@ -108,7 +108,7 @@ class CmdExecutionError(Exception):
 class ConnectionTimeout(Exception):
     pass
 
-class Remote(MessagePrinter):
+class Remote():
     def __init__(self, name="", workdir=None, addr=None,\
             port=22, username=None, ssh_key=None, shell="bash",\
             password_ask=True, quiet=False, verbose=False):
@@ -253,26 +253,26 @@ class Remote(MessagePrinter):
         if not self.remote_dir_exists(self.workdir):
             time.sleep(1)
             self.command("mkdir -p %s" % self.workdir)
-            self.print_msg("Remote workdir created.")
+            _printer.print_msg("Remote workdir created.")
         else:
             raise Exception("Directory %s already exists in remote '%s'." % (self.workdir, self.name))
         cmd_not_available = False
-        self.print_msg("Checking remote dependencies...")
+        _printer.print_msg("Checking remote dependencies...")
         if not self.cmd_avail("qsub"):
-            self.print_msg("Warning: Command 'qsub' not available in '%s'." % self.name, ignore_quiet=True)
+            _printer.print_msg("Warning: Command 'qsub' not available in '%s'." % self.name, ignore_quiet=True)
             cmd_not_available = True 
         if not self.cmd_avail("qstat"):
-            self.print_msg("Warning: Command 'qstat' not available in '%s'." % self.name, ignore_quiet=True)
+            _printer.print_msg("Warning: Command 'qstat' not available in '%s'." % self.name, ignore_quiet=True)
             cmd_not_available = True 
         if not self.cmd_avail("qdel"):
-            self.print_msg("Warning: Command 'qdel' not available in '%s'." % self.name, ignore_quiet=True)
+            _printer.print_msg("Warning: Command 'qdel' not available in '%s'." % self.name, ignore_quiet=True)
             cmd_not_available = True 
         if cmd_not_available:
-            self.print_msg("Info: Sometimes it is necessary to add the path where the\n" +\
+            _printer.print_msg("Info: Sometimes it is necessary to add the path where the\n" +\
                   "      binaries qsub/qstat/qdel are located in the remote to the\n" +\
                   "      ~/.bashrc or ~/.cshrc files.", ignore_quiet=True)
         else:
-            self.print_msg("Done.")
+            _printer.print_msg("Done.")
 
     def connect(self, passwd=None, timeout=None, progress_callback=None):
         self._progress_callback = progress_callback
@@ -344,7 +344,7 @@ class RemoteFileExists(Exception):
     pass
 
 
-class StudyManager(MessagePrinter):
+class StudyManager():
     def __init__(self, study, verbose=False, quiet=False):
         super(StudyManager, self).__init__(quiet, verbose)
         self.DEFAULT_UPLOAD_FILES = ["manage.py", "cases.info", "README"]
@@ -357,22 +357,22 @@ class StudyManager(MessagePrinter):
         if not remote.remote_dir_exists(remote.workdir):
             raise Exception("Remote work directory '%s' do not exists. Use 'remote-init' command to create it." % remote.workdir)
         remotedir = os.path.join(remote.workdir, name)
-        self.print_msg("Checking remote state...")
+        _printer.print_msg("Checking remote state...")
         for case in upload_cases:
             remote_casedir = os.path.join(remotedir, case)
             if remote.remote_dir_exists(remote_casedir) and not force:
                 raise RemoteDirExists("Study '%s' - Case directory '%s' already exists in remote '%s'."\
                                       % (self.study.name, case, remote.name))
         upload_files = upload_cases + self.DEFAULT_UPLOAD_FILES
-        self.print_msg("Compressing study...")
+        _printer.print_msg("Compressing study...")
         tar_name = self._compress(name, base_path, upload_files)
         upload_src = os.path.join(self.tmpdir, tar_name)
         upload_dest = remote.workdir
-        self.print_msg("Uploading study...")
+        _printer.print_msg("Uploading study...")
         remote.upload(upload_src, upload_dest)
         extract_src = os.path.join(upload_dest, tar_name)
         extract_dest = upload_dest
-        self.print_msg("Extracting study in remote...")
+        _printer.print_msg("Extracting study in remote...")
         try:
             out = remote.command("tar -xzf %s --directory %s --warning=no-timestamp" % (extract_src, extract_dest))
             # For older versions of tar. Not sure how they will handle the timestamp issue though.
@@ -381,7 +381,7 @@ class StudyManager(MessagePrinter):
                 out = remote.command("tar -xzf %s --directory %s" % (extract_src, extract_dest))
             except Exception:
                 raise Exception("Unable to decompress '%s.tar.gz' in remote. Check version of 'tar' command in the remote." % tar_name)
-        self.print_msg("Cleaning...")
+        _printer.print_msg("Cleaning...")
         os.remove(upload_src)
         if not keep_targz:
             out = remote.command("rm -f %s" % extract_src)
@@ -485,7 +485,7 @@ class StudyManager(MessagePrinter):
         return regexp
 
 
-    def submit(self, remote, force=False, array_job=False):
+    def job_submit(self, remote, array_job=False):
         remote_studydir = os.path.join(remote.workdir, self.study.name)
         if not remote.remote_dir_exists(remote_studydir):
             error = "Study '%s' not found in remote '%s'. Upload it first.\n" % (self.study_name, remote.name)
@@ -508,7 +508,7 @@ class StudyManager(MessagePrinter):
                     case.status = "SUBMITTED"
                     case.submission_date = time.strftime("%c")
                     nof_submitted += 1
-                    print "Submitted case '%s' (%d/%d)." % (case.name, nof_submitted, len(self.study.case_selection))
+                    _printer.print_msg("Submitted case '%s' (%d/%d)." % (case.name, nof_submitted, len(self.study.case_selection)))
                 except Exception:
                     # Save if some jobs has been submitted before the error
                     self.study.save()
@@ -528,7 +528,7 @@ class StudyManager(MessagePrinter):
                 case.status = "FINISHED"
         self.study.save()
 
-    def status(self, remote):
+    def job_status(self, remote):
         if not remote.cmd_avail("qstat"):
             raise Exception("Command 'qstat' not available in remote '%s'." % remote.name)
         awk = "awk 'match($0,/[0-9]+/){print substr($0, RSTART, RLENGTH)}'"
@@ -543,7 +543,7 @@ class StudyManager(MessagePrinter):
         filtered_output.insert(1, output[1])
         return filtered_output
 
-    def delete_jobs(self, remote):
+    def job_delete(self, remote):
         if not remote.cmd_avail("qdel"):
             raise Exception("Command 'qdel' not available in remote '%s'." % remote.name)
         jobid_list_str = " ".join([c.job_id for c in self.study.case_selection])
@@ -553,6 +553,8 @@ class StudyManager(MessagePrinter):
         for case in self.study.case_selection:
             case.status = "DELETED"
         self.study.save()
+        # Return the number of cases marked for deletion
+        return len(self.study.case_selection)
 
     def download(self, remote, force=False):
         remote_studydir = os.path.join(remote.workdir, self.study.name)
@@ -587,7 +589,7 @@ class StudyManager(MessagePrinter):
         tar_cmd = "tar -czf %s %s" % (compress_src, compress_dirs)
         #TODO: REMOVE THIS
         force = True
-        self.print_msg("Compressing study...")
+        _printer.print_msg("Compressing study...")
         try:
             if force:
                 tar_cmd += " --ignore-failed-read"
@@ -597,13 +599,13 @@ class StudyManager(MessagePrinter):
             if remote.command_status != 0:
                 remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=60)
                 raise Exception(error)
-        self.print_msg("Downloading study...")
+        _printer.print_msg("Downloading study...")
         remote.download(compress_src, self.study.path)
-        self.print_msg("Decompressing study...")
+        _printer.print_msg("Decompressing study...")
         tar_path = os.path.join(self.study.path, self.study.name) + ".tar.gz"
         self._decompress(tar_path, self.study.path)
         for case in self.study.case_selection:
             case.status = "DOWNLOADED"
         self.study.save()
-        self.print_msg("Cleaning...")
+        _printer.print_msg("Cleaning...")
         remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=60)
