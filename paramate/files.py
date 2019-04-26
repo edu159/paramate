@@ -11,53 +11,7 @@ from anytree import Node, PreOrderIter, RenderTree
 from anytree.importer import DictImporter
 from anytree.render import AsciiStyle 
 from study import Case
-from UserDict import UserDict
-
-class ParamInstance(UserDict):
-    def __init__(self, initial_data={}):
-        UserDict.__init__(self, initial_data)
-        self.backtrace = []
-        self.current_generator = None
-
-    def resolve_params(self):
-        for pname, pval in self.items():
-            # Empty backtrace
-            self.backtrace = []
-            if callable(pval):
-                try:
-                    #TODO: Fix name of the generator.
-                    self.current_generator = pval
-                    self[pname] = pval(self)
-                except Exception as error:
-                    raise
-                    # print "Error in 'genenerators.py(%s)':" %  pname
-                    # raise error
-                
-    def __getitem__(self, key):
-        try:
-            # if it is a tuple then the parameter is a dictionary
-            if type(key) == tuple:
-                item = UserDict.__getitem__(self, key[0])[key[1]]
-            else:
-                item = UserDict.__getitem__(self, key)
-            # if type(item) == dict:
-            #     item
-        except KeyError:
-            raise Exception("Parameter '{}' not found in generator '{}'.".format(key, self.current_generator.__name__))
-        if callable(item):
-            if key in self.backtrace:
-                self.backtrace.append(key)
-                decorated_backtrace = ["({})".format(call) for call in self.backtrace]
-                bt_str = "->".join(decorated_backtrace)
-                raise Exception("Error: Circular dependency of parameter '{}' found [{}]".format(key, bt_str))
-            self.backtrace.append(key)
-            self[key] = item(self) 
-
-        item_out = UserDict.__getitem__(self, key)
-        if type(key) == tuple:
-            UserDict.__getitem__(self, key[0])[key[1]] = item_out
-        return item_out
-
+from common import ParamInstance
 
 
 class InfoFile:
@@ -110,7 +64,6 @@ class Section(object):
         self.loaded = False
         self._check()
         self._load()
-
 
     def _check(self):
         self.checked = True
@@ -458,6 +411,111 @@ class BuildSection(Section):
         # super(BuildSection, self).__init__(sections, data, study_path, "", "BUILD")
 
 
+class RemoteSection(Section):
+    def __init__(self, sections, data, study_path, remote_name):
+        example_str =  "FILES:\n" +\
+                       "    - path: mypath1\n" +\
+                       "      files:\n" +\
+                       "        - myfile1.txt\n" +\
+                       "        - myfile2.txt\n" +\
+                       "    - path: mypath2\n" +\
+                       "      files:\n" +\
+                       "        - myfile.*\n" +\
+                       "        - myfile3.txt"
+        self.remote_name = remote_name
+        super(RemoteSection, self).__init__(sections, data, study_path, example_str, remote_name)
+
+
+    def _check(self):
+        allowed_fields = {"user": (str, False, None),
+                          "hostname": (str, False, None),
+                          "port": (int, False, None),
+                          "ssh-key": (dict, False, None),
+                          "remote-workdir": (str, True, None),
+                          "shell": (str, False, ["bash", "csh"]),
+                          "resource-manager": (str, True, ["pbs", "sge", "slurm"]),
+                          "jobs-commands": (dict, False, None),
+                          "config-host": (str, False, None),
+                          }
+        mutual_exc = [("user", "config-host"), ("hostname", "config-host"),
+                      ("port", "config-host"), ("ssh-key", "config-host")] 
+        self._check_dict(self.remote_name, self.data, allowed_fields, mutual_exc=mutual_exc)
+
+        allowed_fields_sshkey = {"file": (str, True, None),
+                                 "allow-agent": (bool, False, None),
+                                 "lookup-keys": (bool, False, None),
+                                }
+        allowed_fields_commands = {"submit": (str, False, None),
+                                   "status": (str, False, None),
+                                   "delete": (str, False, None),
+                                  }
+        if "ssh-key" in self.data:
+            self._check_dict("ssh-key", self.data["ssh-key"], allowed_fields_sshkey)
+
+        if "jobs-commands" in self.data:
+            self._check_dict("jobs-commands", self.data["jobs-commands"], allowed_fields_commands)
+        self.checked = True
+
+
+
+class RemotesFile(Section):
+    def __init__(self, path='.', allowed_sections=None, fname='remotes.yaml'):
+        study_path = os.path.abspath(path)
+        #NOTE: _check() and _load() not overriden here. _check_sections() and _load_sections() implemented.
+        #      This is to allow explicit load() call after constructor is called.
+        super(RemotesFile, self).__init__({}, {}, study_path, "", "Remotes file")
+        self.fname = fname
+        self.path = os.path.join(self.study_path, fname)
+        self.default_remote = None
+        self.loaded = False
+
+    def load(self):
+        with open(self.path, 'r') as remotefile:
+            try:
+                self.data = yaml.load(remotefile)
+            except IOError as e:
+                raise Exception("Problem opening 'remote.yaml' file - %s." % e.strerror)
+            except Exception as error:
+                raise Exception("Internal error of YAML paraser in 'remote.yaml': \n" + str(error))
+            except yaml.YAMLError as error:
+                raise Exception("YAML format wrong in 'remote.yaml' file - %s." % str(error).capitalize())
+        print self.data
+        self._check_remotes()
+        self._load_sections()
+
+    def _check_remotes(self):
+        allowed_fields = {"default": (str, False, None)}
+        for remote_name in self.data.keys():
+            if remote_name == "default": continue
+            allowed_fields.update({remote_name: (dict, True, None)})
+        self._check_value_dict("Remotes file", self.data, dict)
+        self._check_dict("Remotes file", self.data, allowed_fields)
+        if "default" in self.data.keys():
+            if not self.data["default"] in self.data.keys():
+                raise Exception("Default remote '{}' not found in '{}'".format(self.data["default"], self.fname))
+        self.checked = True
+
+    def _load_sections(self):
+        for remote_name, remote in self.data.items():
+            if remote_name == "default": continue
+            self.sections[remote_name] = RemoteSection(self.sections, self.data[remote_name], self.study_path, remote_name)
+
+        # Select default if not defined
+        if "default" in self.data.keys():
+            new_default = self.data["default"]
+        else:
+            new_default = self.data.keys()[0] 
+        self.default_remote = new_default
+        self.data["default"] = self.data[new_default]
+        self.loaded = True
+
+    def __getitem__(self, key):
+            if self.loaded:
+                return self.data[key]
+            else:
+                raise Exception("File '{}' not loaded.".format(self.fname))
+
+
 #TODO: Decouple allowed sections from Param file to make it general
 class ParamFile(Section):
     def __init__(self, path='.', allowed_sections=None, fname='params.yaml'):
@@ -505,6 +563,7 @@ class ParamFile(Section):
         for section_name, (section_class, section_priority) in sections_sortby_priority:
             # self.data.keys() always contains valid sections as they have been checked previously in _check_sections()
             if section_name in self.data.keys():
+                print self.sections
                 self.sections[section_name] = section_class(self.sections, self.data[section_name], self.study_path)
         if "PARAMS-SINGLEVAL" in self.sections.keys():
             common_params = self.sections["PARAMS-MULTIVAL"].get_common_params(self.sections["PARAMS-SINGLEVAL"])

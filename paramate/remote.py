@@ -1,4 +1,9 @@
 import paramiko
+from paramiko.dsskey import DSSKey
+from paramiko.ecdsakey import ECDSAKey
+from paramiko.ed25519key import Ed25519Key
+from paramiko.hostkeys import HostKeys
+from paramiko.rsakey import RSAKey
 import sys
 import yaml
 import shutil
@@ -22,7 +27,7 @@ class CommandExecuter:
 
     def __init__(self, ssh):
         self.ssh = ssh
-        channel = self.ssh.invoke_shell()
+        channel = self.ssh.invoke_shell(width=2000)
         self.stdin = channel.makefile('wb')
         self.stdout = channel.makefile('r')
 
@@ -92,11 +97,9 @@ class CommandExecuter:
             # print "entro cmd"
         # print "shout after:", shout
         # print ""
-        # if sherr and echo_cmd in sherr[-1]:
-        if sherr:
+        if sherr and echo_cmd in sherr[-1]:
             sherr.pop()
-        # if sherr and cmd in sherr[0]:
-        if sherr:
+        if sherr and cmd in sherr[0]:
             sherr.pop(0)
 
         return shin, shout, sherr, exit_status
@@ -109,69 +112,49 @@ class ConnectionTimeout(Exception):
     pass
 
 class Remote():
-    def __init__(self, name="", workdir=None, addr=None,\
-            port=22, username=None, ssh_key=None, shell="bash",\
-            password_ask=True, quiet=False, verbose=False):
-        super(Remote, self).__init__(quiet, verbose)
+    def __init__(self, name="", workdir=None, hostname=None,\
+            port=22, user=None, ssh_key_file=None, shell="bash",\
+            lookup_keys=False, allow_agent=True, resource_manager=None):
         self.name = name
-        self.remote_yaml = None
-        self.ssh_key = ssh_key
-        self.addr = addr
+        self.ssh_key_file = ssh_key_file
+        self.lookup_keys = lookup_keys
+        self.allow_agent = allow_agent 
+        self.hostname = hostname
         self.port = port
-        self.username = username
+        self.user = user
         self.workdir = workdir
         self.shell = shell
+        self.resource_manager = resource_manager
         self.ssh = SSHClient()
         self.ssh.load_system_host_keys()
         self.command_status = None
         self.scp = None
         self._progress_callback = None
         self.cmd = None
-        self.password_ask = password_ask
+        self.auth_type = "password"
 
     def __del__(self):
         self.ssh.close()
 
-    @staticmethod
-    def create_remote_template(path):
-        filepath = os.path.join(DEFAULTS_DIR, "remote.yaml")
-        try:
-            if os.path.exists("remote.yaml"):
-                raise Exception("Template 'remote.yaml' already exists.")
-            else:
-                shutil.copy(filepath, path)
-        except Exception as error:
-            raise Exception("Error:\n" + str(error))
-
-
-    def _check_file(self):
-        pass
-
-    def load(self, path, remote_name=None):
-        with open(path, 'r') as remotefile:
+    def passphrase_required(self):
+        if self.ssh_key_file is None:
+            return False
+        for key_type in (DSSKey, ECDSAKey, Ed25519Key, RSAKey):
             try:
-                self.remote_yaml = yaml.load(remotefile)
-            except yaml.YAMLError as error:
-                raise Exception("YAML format wrong in 'remote.yaml' file - %s." % str(error).capitalize())
-            try:
-                if remote_name is None:
-                    if len(self.remote_yaml) == 1:
-                        self.name = self.remote_yaml.keys()[0]
-                    else:
-                        self.name = self.remote_yaml["default"]
-                else:
-                    self.name = remote_name
-            except KeyError as error:
-                raise Exception("Default remote not specified. Add 'default: remote_name' to remote.yaml file.")
-            try:
-                self.remote_yaml = self.remote_yaml[self.name]
-            except KeyError as error:
-                raise Exception("Remote '%s' not found in 'remote.yaml' file." % self.name)
-        self._unpack_remote_yaml(self.remote_yaml)
-
-    def _unpack_remote_yaml(self, yaml_remote):
-        if "host" in yaml_remote.keys():
-            host = yaml_remote["host"]
+                pkey = key_type.from_private_key_file(self.ssh_key_file, password=None)
+            except paramiko.ssh_exception.PasswordRequiredException:
+                return True
+            except paramiko.ssh_exception.SSHException:
+                pass
+        return False
+        
+    def configure(self, remote_name, yaml_remote):
+        # Mandatory fields
+        self.name = remote_name
+        self.workdir = yaml_remote["remote-workdir"]
+        self.resource_manager = yaml_remote["resource-manager"]
+        if "config-host" in yaml_remote:
+            host = yaml_remote["config-host"]
             host_data = {}
             with open("/home/eduardo/.ssh/config", 'r') as config_file:
                 sshconfig = paramiko.config.SSHConfig()
@@ -182,61 +165,44 @@ class Remote():
                     raise Exception("Host '{}' not found in '$HOME/.ssh/config'.".format(host))
             # Mandatory
             try:
-                self.username = host_data["user"]
-                self.addr = host_data["hostname"]
+                self.user = host_data["user"]
+                self.hostname = host_data["hostname"]
             except KeyError as e:
                 raise Exception("Field %s not found in host '{}' at '$HOME/.ssh/config'.".format(str(e)))
             # Optional
             if "port" in host_data.keys():
                 self.port = host_data["port"]
             if "identityfile" in host_data.keys():
-                self.ssh_key = host_data["identityfile"]
+                self.auth_type = "key"
+                self.ssh_key_file = host_data["identityfile"][0]
+            if "identitiesonly" in host_data.keys():
+                self.lookup_keys = not host_data["identitiesonly"]
 
         else:
             # Mandatory
-            try:
-                self.addr = yaml_remote["address"]
-                self.username = yaml_remote["username"]
-            except KeyError as e:
-                raise Exception("Mandatory field %s not found in remote file." % str(e))
+            self.hostname = yaml_remote["hostname"]
+            self.user = yaml_remote["user"]
             # Optional
             if "port" in yaml_remote.keys():
                 self.port = yaml_remote["port"]
             if "ssh-key" in yaml_remote.keys():
-                self.ssh_key = yaml_remote["ssh-key"]
-
+                self.auth_type = "key"
+                self.ssh_key_file = yaml_remote["ssh-key"]["file"]
+                if "lookup-keys" in yaml_remote["ssh-key"].keys():
+                    self.lookup_keys = yaml_remote["ssh-key"]["lookup-keys"]
+                if "allow-agent" in yaml_remote["ssh-key"].keys():
+                    self.allow_agent = yaml_remote["ssh-key"]["allow-agent"]
         # Mandatory
-        try:
-            self.workdir = yaml_remote["remote-workdir"]
-            self.resource_manager = yaml_remote["resource-manager"]
-            self.shell = yaml_remote["shell"]
-        except KeyError as e:
-            raise Exception("Mandatory field %s not found in remote file." % str(e))
+        self.workdir = yaml_remote["remote-workdir"]
+        self.resource_manager = yaml_remote["resource-manager"]
+        self.shell = yaml_remote["shell"]
+
         # Optional
         if "shell" in yaml_remote.keys():
             self.shell = yaml_remote["shell"]
-        if "password" in yaml_remote.keys():
-            self.password_ask = yaml_remote["password"]
+        if "jobs-commands" in yaml_remote.keys():
+            self.jobs_commands = yaml_remote["jobs-commands"]
 
-    #TODO: THis method is not updated with the new file structure
-    def save(self, path):
-        remotedata = {"remote": {}}
-        try:
-            remotedata["remote"]["name"] = self.name
-            remotedata["remote"]["address"] = self.addr
-            remotedata["remote"]["port"] = self.port
-            remotedata["remote"]["remote-workdir"] = self.workdir
-            remotedata["remote"]["username"] = self.username
-            remotedata["remote"]["shell"] = self.shell
-        except Exception:
-            raise Exception("Field %s not defined." % str(e))
-        try:
-            remotedata["remote"]["key-login"] = self.key_login
-        except Exception:
-            pass
-
-        with open('%s.yaml', 'w') as remotefile:
-            yaml.dump(remotedata, remotefile, default_flow_style=False)
 
     def available(self, timeout=60):
         try:
@@ -277,8 +243,8 @@ class Remote():
     def connect(self, passwd=None, timeout=None, progress_callback=None):
         self._progress_callback = progress_callback
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        self.ssh.connect(self.addr, port=self.port, password=passwd, timeout=timeout, username=self.username,\
-                         key_filename=self.ssh_key)
+        self.ssh.connect(self.hostname, port=self.port, password=passwd, timeout=timeout, username=self.user,\
+                         key_filename=self.ssh_key_file, look_for_keys=self.lookup_keys)
         self.scp = SCPClient(self.ssh.get_transport(), socket_timeout=60.0, progress=self._progress_callback)
         self.cmd = CommandExecuter(self.ssh)
 
@@ -293,10 +259,8 @@ class Remote():
     #     print stdin.readlines(), stdout.readlines(), stderr.readlines()
     #     return stdout.readlines()
 
-
-
     def command(self, cmd, timeout=None, fail_on_error=True):
-        stdin, stdout, stderr, exit_status = self.cmd.exec_command(cmd) #, timeout=timeout)
+        stdin, stdout, stderr, exit_status = self.cmd.exec_command(cmd)
         self.command_status = exit_status
         if fail_on_error:
             if self.command_status != 0:
@@ -343,15 +307,11 @@ class RemoteDirExists(Exception):
 class RemoteFileExists(Exception):
     pass
 
-
 class StudyManager():
-    def __init__(self, study, verbose=False, quiet=False):
-        super(StudyManager, self).__init__(quiet, verbose)
+    def __init__(self, study):
         self.DEFAULT_UPLOAD_FILES = ["manage.py", "cases.info", "README"]
         self.tmpdir = "/tmp"
         self.study = study
-        self.verbose = verbose
-        self.quiet = quiet
      
     def _upload(self, remote, name, base_path, upload_cases, keep_targz=False, force=False):
         if not remote.remote_dir_exists(remote.workdir):

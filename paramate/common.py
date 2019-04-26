@@ -6,6 +6,55 @@ import colorama as color
 import time
 import sys
 
+from UserDict import UserDict
+
+class ParamInstance(UserDict):
+    def __init__(self, initial_data={}):
+        UserDict.__init__(self, initial_data)
+        self.backtrace = []
+        self.current_generator = None
+
+    def resolve_params(self):
+        for pname, pval in self.items():
+            # Empty backtrace
+            self.backtrace = []
+            if callable(pval):
+                try:
+                    #TODO: Fix name of the generator.
+                    self.current_generator = pval
+                    self[pname] = pval(self)
+                except Exception as error:
+                    raise
+                    # print "Error in 'genenerators.py(%s)':" %  pname
+                    # raise error
+                
+    def __getitem__(self, key):
+        try:
+            # if it is a tuple then the parameter is a dictionary
+            if type(key) == tuple:
+                item = UserDict.__getitem__(self, key[0])[key[1]]
+            else:
+                item = UserDict.__getitem__(self, key)
+            # if type(item) == dict:
+            #     item
+        except KeyError:
+            raise Exception("Parameter '{}' not found in generator '{}'.".format(key, self.current_generator.__name__))
+        if callable(item):
+            if key in self.backtrace:
+                self.backtrace.append(key)
+                decorated_backtrace = ["({})".format(call) for call in self.backtrace]
+                bt_str = "->".join(decorated_backtrace)
+                raise Exception("Error: Circular dependency of parameter '{}' found [{}]".format(key, bt_str))
+            self.backtrace.append(key)
+            self[key] = item(self) 
+
+        item_out = UserDict.__getitem__(self, key)
+        if type(key) == tuple:
+            UserDict.__getitem__(self, key[0])[key[1]] = item_out
+        return item_out
+
+
+
 # Parampy params useful to build paths.
 # TODO: Currently only 1 level of nesting allowed for dictionaries. This provide the possibility 
 #       to return multiple values from a generator. Ideally an arbitrary level of nesting levels like
@@ -26,7 +75,6 @@ def replace_placeholders(file_paths, params, warn_undefined=True):
         return pvalue
 
 
-    printer = MessagePrinter(False, False)
     for path in file_paths:
         lines = []
         with open(path, 'r') as placeholder_file:
@@ -66,7 +114,7 @@ def replace_placeholders(file_paths, params, warn_undefined=True):
                 lines[ln] = lines[ln].replace("$[" + opt + "]", str(param_value))
 
         if undefined_dict:
-            printer.print_msg(str(undefined_dict))
+            _printer.print_msg(str(undefined_dict))
 
         with open(path, 'w+') as replaced_file:
             replaced_file.writelines(lines)
