@@ -238,7 +238,7 @@ class ParamsSection(Section):
 
         else:
             return empty
-
+    #TODO: Improve how to handle absence of generators.py
     def _import_generators(self):
         try:
             # Insert study path to load generators

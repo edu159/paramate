@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='paramate',
-    version='0.1',
+    version='1.0',
     description='A software to generate parameter studies and handle HPC jobs.',
     url='http://github.com/edu159/paramate',
     author='Eduardo Ramos Fernandez',
@@ -20,7 +20,6 @@ setup(name='paramate',
       'scp',
       'colorama',
       'progressbar2',
-      'cryptography',
     ],
     include_package_data=True,
     zip_safe=False)
