@@ -470,15 +470,13 @@ class RemotesFile(Section):
         self.loaded = False
 
     def load(self):
-        with open(self.path, 'r') as remotefile:
-            try:
+        try:
+            with open(self.path, 'r') as  remotefile:
                 self.data = yaml.load(remotefile)
-            except IOError as e:
-                raise Exception("Problem opening 'remote.yaml' file - %s." % e.strerror)
-            except Exception as error:
-                raise Exception("Internal error of YAML paraser in 'remote.yaml': \n" + str(error))
-            except yaml.YAMLError as error:
-                raise Exception("YAML format wrong in 'remote.yaml' file - %s." % str(error).capitalize())
+        except IOError as e:
+            raise Exception("Problem opening file '{}' - {}.".format(self.fname, e.strerror))
+        except yaml.YAMLError as error:
+            raise Exception("Wrong YAML format in file '{}' - {}.".format(self.fname, str(error).capitalize()))
         self._check_remotes()
         self._load_sections()
 
@@ -538,9 +536,9 @@ class ParamFile(Section):
             with open(self.path, 'r') as paramfile:
                 self.data = yaml.load(paramfile)
         except IOError as e:
-            raise Exception("Problem opening 'params.yaml' file - %s." % e.strerror)
-        except Exception as error:
-            raise Exception("Internal error of YAML paraser in 'params.yaml': \n" + str(error))
+            raise Exception("Problem opening '{}' file - {}.".format(self.fname, e.strerror))
+        except yaml.YAMLError as error:
+            raise Exception("Wrong YAML format in file '{}' - {}.".format(self.fname, str(error).capitalize()))
         self._check_sections()
         self._load_sections()
         self.loaded = True
