@@ -11,7 +11,7 @@ from anytree import Node, PreOrderIter, RenderTree
 from anytree.importer import DictImporter
 from anytree.render import AsciiStyle 
 from study import Case
-from common import ParamInstance
+from common import ParamInstance, _printer
 
 
 class InfoFile:
@@ -479,7 +479,6 @@ class RemotesFile(Section):
                 raise Exception("Internal error of YAML paraser in 'remote.yaml': \n" + str(error))
             except yaml.YAMLError as error:
                 raise Exception("YAML format wrong in 'remote.yaml' file - %s." % str(error).capitalize())
-        print self.data
         self._check_remotes()
         self._load_sections()
 
@@ -563,7 +562,6 @@ class ParamFile(Section):
         for section_name, (section_class, section_priority) in sections_sortby_priority:
             # self.data.keys() always contains valid sections as they have been checked previously in _check_sections()
             if section_name in self.data.keys():
-                print self.sections
                 self.sections[section_name] = section_class(self.sections, self.data[section_name], self.study_path)
         if "PARAMS-SINGLEVAL" in self.sections.keys():
             common_params = self.sections["PARAMS-MULTIVAL"].get_common_params(self.sections["PARAMS-SINGLEVAL"])
@@ -597,8 +595,11 @@ class ParamFile(Section):
 
     def print_tree(self):
         root = self.sections["PARAMS-MULTIVAL"].tree
-        print ""
-        print RenderTree(root, AsciiStyle()).by_attr("label")
+        # print ""
+        _printer.print_msg("", "blank")
+        for l in str(RenderTree(root, AsciiStyle()).by_attr("label")).split('\n'):
+            _printer.print_msg(l)
+        _printer.print_msg("", "blank")
 
 
     def __getitem__(self, key):

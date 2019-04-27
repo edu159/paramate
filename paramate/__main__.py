@@ -1,5 +1,7 @@
 #!/usr/bin/env python2
+#NOTE; Install pip install cryptography=2.4.2 to remove warnings
 import time
+import paramiko
 import os
 import re
 import sys
@@ -8,12 +10,26 @@ import getpass
 from common import _printer, ProgressBar
 from study import Study, StudyGenerator
 from files import RemotesFile
+from contextlib import contextmanager
 
 import colorama as color
 # from __future__ import print_function
 
 SRC_DIR = os.path.dirname(os.path.realpath(__file__))
 DEFAULTS_DIR = os.path.join(SRC_DIR, "defaults")
+
+@contextmanager
+def action_error_handler(debug):
+    try:
+        yield 
+    except Exception as error:
+        if debug:
+            raise
+        else:
+            _printer.indent_level = 0
+            _printer.print_msg(str(error), "error")
+            _printer.print_msg("Aborting...", "error")
+            sys.exit(1)
 
 def decode_case_selector(selector, nof_cases):
     cases_idx = []
@@ -45,36 +61,11 @@ def decode_case_selector(selector, nof_cases):
     return cases_idx
 
 
-# Look for a remote. First look in the ConfigDir. If not present 
-def opts_get_remote(abs_remote_path, remote_name):
-    r = remote.Remote()
-    remote_yaml_path = os.path.join(abs_remote_path, "remote.yaml")
-
-    try:
-        r.load(remote_yaml_path, remote_name=remote_name)
-    except IOError as error:
-        _printer.print_msg("File 'remote.yaml' not found in study directory.", "error")
-        _printer.print_msg("Aborting...", "error")
-        sys.exit() 
-
-    try:
-        _printer.print_msg("Testing connection to remote '%s'..." % r.name, end='')
-        r.available()
-        print "OK"
-    except Exception as error: 
-        print "Failed."
-        _printer.print_msg(str(error), "error")
-        _printer.print_msg("Aborting...", "error")
-        sys.exit()
-    return r
-
-
-def connect(remote, debug=False, show_progress_bar=False):
+def connect(remote, debug=False, progress_bar=None):
     attempts = 0
     pass_required = False
     prompt_str = ""
     passwd = None
-    print remote.name
     if remote.auth_type == "password":
         prompt_str = "Password ({}):".format(remote.name)
         pass_required = True
@@ -86,77 +77,78 @@ def connect(remote, debug=False, show_progress_bar=False):
             if pass_required:
                 _printer.print_msg(prompt_str, "input", end='')
                 passwd = getpass.getpass("")
-            if show_progress_bar:
-                progress_bar = ProgressBar()
+            if progress_bar is not None:
                 remote.connect(passwd, progress_callback=progress_bar.callback)
             else:
                 remote.connect(passwd)
-        except Exception as error:
+        except paramiko.ssh_exception.AuthenticationException as error:
             attempts += 1
-            if attempts < 3 and pass_required:
-                _printer.print_msg("Authentication failed", "warning")
-                continue
-            if debug:
-                raise
-            else:
-                _printer.print_msg(str(error).rstrip('.') + " (3 attempts)", "error")
-                _printer.print_msg("Aborting...", "error")
-                sys.exit()
+            if pass_required:
+                if attempts < 3:
+                    _printer.print_msg("Authentication failed", "warning")
+                    continue
+                else:
+                    raise Exception(str(error).rstrip('.') + " (3 attempts)")
+            raise
         break
+
+def get_remote(study_path, remote_name_in):
+    # _printer.print_msg("Testing connection to remote '%s'..." % r.name, end='')
+    # r.available()
+    # print "OK"
+
+    remotes = RemotesFile(study_path)
+    remotes.load()
+    r = remote.Remote()
+    # Set to "default" if args.remote is None
+    if remote_name_in == None:
+        remote_name = remotes.default_remote
+        _printer.print_msg("Using default remote '{}'...".format(remote_name))
+    else:
+        remote_name = remote_name_in
+    remote_yaml = remotes[remote_name]
+    r.configure(remote_name, remote_yaml)
+    return r
 
 
 # Actions for maim program
 def create_action(args):
     study_name = os.path.basename('.')
     study_path = os.path.dirname(os.path.abspath(args.create))
-    try:
+    with action_error_handler(args.debug):
         StudyGenerator.create_study(study_path, study_name)
         print "Created study '%s.'" % study_name
-    except Exception as error:
-        if args.debug:
-            raise
-        else:
-            _printer.print_msg(str(error), "error")
-            _printer.print_msg("Aborting...", "error")
-            sys.exit()
 
+# TODO: Improve with info about size of lists and total number of params
 def print_tree_action(args):
     study_path = os.path.abspath('.')
     study_name = os.path.basename(study_path)
-    try:
+    with action_error_handler(args.debug):
         study = Study(study_name, study_path)
         _printer.print_msg("Printing param tree...", "info")
+        _printer.indent_level = 1
         study.param_file.print_tree()
-    except Exception as error:
-        if args.debug:
-            raise
-        else:
-            _printer.print_msg(str(error), "error")
-            _printer.print_msg("Aborting...", "error")
-            sys.exit()
+
+    _printer.indent_level = 0
+    _printer.print_msg("Done.", "info")
+
 
 def generate_action(args):
     study_path = os.path.abspath('.')
     study_name = os.path.basename(study_path)
-    try:
+    with action_error_handler(args.debug):
         study = Study(study_name, study_path)
         sb  =  StudyGenerator(study, short_name=args.shortname,
                               build_once=args.build_once,
                               keep_onerror=args.keep_on_error,
                               abort_undefined=args.abort_undefined)
         sb.generate_cases()
-    except Exception as error:
-        if args.debug:
-            raise
-        else:
-            _printer.print_msg(str(error), "error")
-            _printer.print_msg("Aborting...", "error")
-            sys.exit()
+    _printer.print_msg("Done.", "info")
 
 def delete_action(args):
     study_path = os.path.abspath('.')
     study_name = os.path.basename(study_path)
-    try:
+    with action_error_handler(args.debug):
         study = Study(study_name, study_path, load_param_file=False)
         try:
             study.load()
@@ -173,53 +165,25 @@ def delete_action(args):
             study.delete()
         else:
             _printer.print_msg("Delete aborted.", "info")
-    except Exception as error:
-        if args.debug:
-            raise
-        else:
-            _printer.print_msg(str(error), "error")
-            sys.exit()
     _printer.print_msg("Done.", "info")
 
 def remote_init_action(args):
     remote_name = args.remote
     study_path = os.path.abspath('.')
     study_name = os.path.basename(study_path)
-    r = opts_get_remote(study_path, remote_name)
-    connect(r, debug=args.debug)
-    try:
+    with action_error_handler(args.debug):
+        r = get_remote(study_path, remote_name)
+        connect(r, debug=args.debug)
         r.init_remote()
-    except Exception as error:
-        if args.debug:
-            raise
-        else:
-            r.close()
-            _printer.print_msg("Error: " + str(error), "error")
-            sys.exit()
-    r.close()
+    _printer.print_msg("Done.", "info")
+
 
 def clean_action(args):
     study_path = os.path.abspath('.')
-    try:
-        remotes = RemotesFile(study_path)
-        remotes.load()
-        r = remote.Remote()
-        # Set to "default" if args.remote is None
-        if args.remote == None:
-            remote_name = remotes.default_remote
-            _printer.print_msg("Using remote '{}'...".format(remote_name))
-        else:
-            remote_name = args.remote
-        remote_yaml = remotes[remote_name]
-        r.configure(remote_name, remote_yaml)
-        print r.ssh_key_file
+    with action_error_handler(args.debug):
+        r = get_remote(study_path, args.remote)
         connect(r, debug=args.debug)
-    except Exception as error:
-        if args.debug:
-            raise
-        else:
-            _printer.print_msg("Error: " + str(error), "error")
-            sys.exit()
+    _printer.print_msg("Done.", "info")
 
 
     # study_path = os.path.abspath('.')
@@ -245,33 +209,36 @@ def clean_action(args):
 def get_cases_byremote(cases_idx, study, allowed_states, remote=None):
     cases_remote = study.get_cases(cases_idx, "id", sortby="remote")
     no_remote_cases = cases_remote.pop(None, None)
-    ret_info = {}
+    if no_remote_cases is None:
+        no_remote_cases = []
+    remote_info = {}
     state_list = ["CREATED", "UPLOADED", "SUBMITTED", "FINISHED", "DELETED", "DOWNLOADED"]
     remotes = []
     if remote is None:
         remotes = cases_remote.keys()
     else:
-        if "CREATED" in allowed_states:
-            if no_remote_cases is not None:
-                try:
-                    cases_remote[remote].extend(no_remote_cases)
-                except KeyError:
-                    cases_remote[remote] = no_remote_cases
-                remotes = [remote]
-        else:
-            remotes = [remote]
+        remotes = [remote]
+        # if "CREATED" in allowed_states:
+        #     if no_remote_cases is not None:
+        #         try:
+        #             cases_remote[remote].extend(no_remote_cases)
+        #         except KeyError:
+        #             cases_remote[remote] = no_remote_cases
+        #         remotes = [remote]
+        # else:
+        #     remotes = [remote]
 
     for r in remotes:
-        ret_info[r] =  {"nof_selected": len(cases_remote[r]), "nof_valid": 0, "cases": {}, "valid_cases": []}
+        remote_info[r] =  {"nof_selected": len(cases_remote[r]), "nof_valid": 0, "cases": {}, "valid_cases": []}
         for state in state_list:
             cases = list(set(study.get_cases([state], "status")).intersection(set(cases_remote[r])))
-            ret_info[r]["cases"][state] = {"nof": len(cases), "list": cases}
+            remote_info[r]["cases"][state] = {"nof": len(cases), "list": cases}
             if state in allowed_states:
-                ret_info[r]["valid_cases"].extend(cases)
+                remote_info[r]["valid_cases"].extend(cases)
 
-        ret_info[r]["nof_valid"] = len(ret_info[r]["valid_cases"])
+        remote_info[r]["nof_valid"] = len(remote_info[r]["valid_cases"])
 
-    return ret_info 
+    return remote_info, no_remote_cases
 
 def job_status_action(args):
     action = "job-status"
@@ -280,6 +247,7 @@ def job_status_action(args):
         return study_manager.job_status(remote)
 
     def output_handler_job_status(output):
+        _printer.indent_level = 2
         _printer.print_msg("")
         for l in output:
             _printer.print_msg(l, end='')
@@ -312,7 +280,9 @@ def upload_action(args):
 
     def output_handler_upload(output):
        pass 
-    state_action(args, action, allowed_states, action_func_upload, output_handler_upload)
+    progress_bar_upload = ProgressBar("Uploading: ") 
+    state_action(args, action, allowed_states, action_func_upload,
+                 output_handler_upload, progress_bar_upload)
 
 def download_action(args):
     action = "download"
@@ -321,9 +291,11 @@ def download_action(args):
         return study_manager.download(remote, force=args.force)
     def output_handler_download(output):
        pass 
-    state_action(args, action, allowed_states, action_func_download, output_handler_download)
+    progress_bar_download = ProgressBar("Downloading: ")
+    state_action(args, action, allowed_states, action_func_download,
+                output_handler_download, progress_bar_download)
 
-def state_action(args, action, allowed_states, action_func, output_handler):
+def state_action(args, action, allowed_states, action_func, output_handler, action_progress_bar=None):
     study_path = os.path.abspath('.')
     study_name = os.path.basename(study_path)
     study = Study(study_name, study_path)
@@ -334,23 +306,37 @@ def state_action(args, action, allowed_states, action_func, output_handler):
         case_selector = args.selector
     cases_idx = decode_case_selector(case_selector, study.nof_cases)
     study.set_selection(cases_idx)
-    remote_cases = get_cases_byremote(cases_idx, study, allowed_states, remote=args.remote)
-    if args.remote is not None:
-        nof_remotes = 1
-    else:
-        nof_remotes = len(remote_cases.keys())
-    _printer.print_msg("Selected {} cases ({} remotes) for action: '{}'...".format(len(cases_idx), nof_remotes,  action), "info")
-    for counter, (remote_name, remote_info) in enumerate(remote_cases.items()):
-        _printer.indent_level = 1
-        _printer.print_msg("[{}] '{}': {} cases selected".format(counter+1, remote_name, remote_info["nof_selected"]), "info")
-        for status, case_info  in remote_info["cases"].items():
-            if case_info["nof"] > 0:
-                _printer.indent_level = 2
-                _printer.print_msg("{}: {}".format(status, case_info["nof"]))
-        nof_excluded_cases = remote_info["nof_selected"] - remote_info["nof_valid"]
-        if nof_excluded_cases > 0:
-            _printer.print_msg("Found {} cases with a state not in {}. They will be ignored.".format(nof_excluded_cases, allowed_states))
+    remote_cases, no_remote_cases  = get_cases_byremote(cases_idx, study, allowed_states, remote=args.remote)
+    nof_remotes = len(remote_cases.keys())
+    nof_selected_cases = len(cases_idx)
+    nof_no_remote_cases = len(no_remote_cases)
+    nof_remote_cases = nof_selected_cases - nof_no_remote_cases
 
+    # Print info about the state of selected cases
+    _printer.print_msg("Selected {} cases for action '{}':".format(nof_selected_cases, action), "info")
+    _printer.indent_level = 1
+    if nof_no_remote_cases:
+        _printer.print_msg("- {} cases with no associated remote...".format(nof_no_remote_cases), "info")
+    if nof_remote_cases > 0:
+        _printer.print_msg("- {} cases in ({} remotes)':".format(len(cases_idx)-len(no_remote_cases), nof_remotes), "info")
+        for counter, (remote_name, remote_info) in enumerate(remote_cases.items()):
+            _printer.indent_level = 2
+            _printer.print_msg("[{}] '{}': {} cases selected".format(counter+1, remote_name, remote_info["nof_selected"]), "info")
+            for status, case_info  in remote_info["cases"].items():
+                if case_info["nof"] > 0:
+                    _printer.indent_level = 3
+                    _printer.print_msg("{}: {}".format(status, case_info["nof"]))
+            nof_excluded_cases = remote_info["nof_selected"] - remote_info["nof_valid"]
+            if nof_excluded_cases > 0:
+                _printer.print_msg("Found {} cases with a state not in {}. They will be ignored.".format(nof_excluded_cases, allowed_states))
+
+    # The cases which has no remote are the ones to upload
+    if action == "upload":
+        with action_error_handler(args.debug):
+            _printer.indent_level = 0
+            r = get_remote(study_path, args.remote)
+            remote_cases = {}
+            remote_cases[r.name] = {"nof_valid": len(no_remote_cases), "valid_cases": no_remote_cases}
  
     # Iterate over remotes
     for remote_name, remote_info in remote_cases.items():
@@ -375,36 +361,31 @@ def state_action(args, action, allowed_states, action_func, output_handler):
             _printer.print_msg("Skipping...")
             _printer.print_msg("", "blank")
             continue
-        r = opts_get_remote(study_path, remote_name)
-        connect(r, debug=args.debug, show_progress_bar=True)
-        sm = remote.StudyManager(study)
-        try:
+        with action_error_handler(args.debug):
+            r = get_remote(study_path, remote_name)
+            connect(r, debug=args.debug, progress_bar=action_progress_bar)
+            sm = remote.StudyManager(study)
             # The update affect all cases not only the selection
             sm.update_status(r)
-            remote_cases_updated = get_cases_byremote(cases_idx, study, allowed_states, remote=remote_name)
-            valid_cases = remote_cases_updated[remote_name]["valid_cases"]
+            # Upload is not affected by update_status()
+            if action == "upload":
+                valid_cases = remote_cases[remote_name]["valid_cases"]
+            else:
+                remote_cases_updated, no_remote_cases = get_cases_byremote(cases_idx, study, allowed_states, remote=remote_name)
+                valid_cases = remote_cases_updated[remote_name]["valid_cases"]
             output = ""
             if valid_cases:
                 _printer.print_msg("Performing action '{}' on {} cases...".format(action, len(valid_cases)), "info")
                 study.set_selection(valid_cases)
                 output = action_func(sm, r)
-                _printer.indent_level = 2
                 output_handler(output)
             else:
                 _printer.print_msg("No jobs running found. Skipping...")
-        except Exception as error:
-            if args.debug:
-                raise
-            else:
-                r.close()
-                _printer.indent_level = 0
-                _printer.print_msg(str(error), "error")
-                sys.exit()
         r.close()
     _printer.print_msg("", "blank")
     _printer.indent_level = 0
     if sum([r["nof_valid"] for r in remote_cases.values()]) == 0:
-            _printer.print_msg("Nothing to do for action: '{}'.".format(action), "info")
+            _printer.print_msg("Nothing to do for action: '{}'".format(action), "info")
     _printer.print_msg("Done.", "info")
  
 
@@ -469,34 +450,37 @@ def main(args=None):
     # Parser download 
     parser_download = subparsers.add_parser('download', help="download study to remote.")
     parser_download.set_defaults(func=download_action)
-    parser_download.add_argument('-s', '--selector', type=str, help="Case selector.")
-    parser_download.add_argument('-r', '--remote', type=str, help="Remote name.")
     parser_download.add_argument('-f', '--force', action="store_true", help="Force download. Overwrite files.")
     parser_download.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
-    
+    parser_download_mexgroup = parser_download.add_mutually_exclusive_group()
+    parser_download_mexgroup.add_argument('-s', '--selector', type=str, help="Case selector.")
+    parser_download_mexgroup.add_argument('-r', '--remote', type=str, help="Remote name.")
+
     # Parser job-submit
     parser_job_submit = subparsers.add_parser('job-submit', help="Submit study remotely/localy.")
     parser_job_submit.set_defaults(func=job_submit_action)
-    parser_job_submit.add_argument('-s', '--selector', type=str, help="Case selector.")
-    parser_job_submit.add_argument('-r', '--remote', type=str, help="Remote name.")
     parser_job_submit.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
     parser_job_submit.add_argument("--array-job", action="store_true", default=False, help="Submit study as a array of jobs.")
+    parser_job_submit_mexgroup = parser_job_submit.add_mutually_exclusive_group()
+    parser_job_submit_mexgroup.add_argument('-s', '--selector', type=str, help="Case selector.")
+    parser_job_submit_mexgroup.add_argument('-r', '--remote', type=str, help="Remote name.")
 
     # Parser job-status 
     parser_job_status = subparsers.add_parser('job-status', help="Query job status.")
     parser_job_status.set_defaults(func=job_status_action)
-    parser_job_status.add_argument('-s', '--selector', type=str, help="Case selector.")
-    parser_job_status.add_argument('-r', '--remote', type=str, help="Remote name.")
     parser_job_status.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
+    parser_job_status_mexgroup = parser_job_status.add_mutually_exclusive_group()
+    parser_job_status_mexgroup.add_argument('-s', '--selector', type=str, help="Case selector.")
+    parser_job_status_mexgroup.add_argument('-r', '--remote', type=str, help="Remote name.")
 
     # Parser job-delete
     parser_job_delete = subparsers.add_parser('job-delete', help="Delete jobs associated with cases.")
     parser_job_delete.set_defaults(func=job_delete_action)
-    parser_job_delete.add_argument('-s', '--selector', type=str, help="Case selector.")
-    parser_job_delete.add_argument('-r', '--remote', type=str, help="Remote name.")
     parser_job_delete.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
+    parser_job_delete_mexgroup = parser_job_delete.add_mutually_exclusive_group()
+    parser_job_delete_mexgroup.add_argument('-s', '--selector', type=str, help="Case selector.")
+    parser_job_delete_mexgroup.add_argument('-r', '--remote', type=str, help="Remote name.")
  
-       
     # actions_group.add_argument("--check", action="store_true", help="Check if the study is consistent with 'params.yaml' file.")
     # actions_group.add_argument("--info", action="store_true", help="Get a resumed info of the study.")
 

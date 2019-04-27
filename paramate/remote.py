@@ -237,8 +237,6 @@ class Remote():
             _printer.print_msg("Info: Sometimes it is necessary to add the path where the\n" +\
                   "      binaries qsub/qstat/qdel are located in the remote to the\n" +\
                   "      ~/.bashrc or ~/.cshrc files.", ignore_quiet=True)
-        else:
-            _printer.print_msg("Done.")
 
     def connect(self, passwd=None, timeout=None, progress_callback=None):
         self._progress_callback = progress_callback
@@ -328,7 +326,6 @@ class StudyManager():
         tar_name = self._compress(name, base_path, upload_files)
         upload_src = os.path.join(self.tmpdir, tar_name)
         upload_dest = remote.workdir
-        _printer.print_msg("Uploading study...")
         remote.upload(upload_src, upload_dest)
         extract_src = os.path.join(upload_dest, tar_name)
         extract_dest = upload_dest
@@ -507,7 +504,7 @@ class StudyManager():
         if not remote.cmd_avail("qdel"):
             raise Exception("Command 'qdel' not available in remote '%s'." % remote.name)
         jobid_list_str = " ".join([c.job_id for c in self.study.case_selection])
-        print "jobids:", jobid_list_str
+        # print "jobids:", jobid_list_str
         output = remote.command("qdel {}".format(jobid_list_str), timeout=60)
         # TODO: wait for deletetion using looping status()
         for case in self.study.case_selection:
@@ -559,7 +556,6 @@ class StudyManager():
             if remote.command_status != 0:
                 remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=60)
                 raise Exception(error)
-        _printer.print_msg("Downloading study...")
         remote.download(compress_src, self.study.path)
         _printer.print_msg("Decompressing study...")
         tar_path = os.path.join(self.study.path, self.study.name) + ".tar.gz"

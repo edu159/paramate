@@ -125,6 +125,7 @@ class MessagePrinter(object):
     def __init__(self):
         # Shared attribute to fix the indentation level
         self.indent_level = 0
+        self.max_len_msg = 0
         self.quiet = False 
         self.verbose = False 
         self.colormap = {"info": color.Fore.GREEN,
@@ -142,10 +143,8 @@ class MessagePrinter(object):
 
     def _indent_spaces(self):
         return "    " * self.indent_level
-            
-    #Logic: a) --quiet option can be ignored.
-    #       b) if verbose=True then check --verbose flag 
-    def print_msg(self, message, msg_type="info", ignore_quiet=False, verbose=False, end="\n"):
+
+    def formatted_str(self, message, msg_type, end="\n"):
         max_len = max([len(k) for k in self.colormap.keys()])
         if msg_type == "unformated":
             formatted_msg = message
@@ -157,23 +156,35 @@ class MessagePrinter(object):
                 msg_type_str = ""
             indent = self._indent_spaces()
             formatted_msg = self.colormap[msg_type] + "[ " + msg_type_str.center(max_len) + " ] " + indent + color.Fore.WHITE +  message + color.Fore.RESET
+        return formatted_msg
+            
+    #Logic: a) --quiet option can be ignored.
+    #       b) if verbose=True then check --verbose flag 
+    def print_msg(self, message, msg_type="info", ignore_quiet=False, verbose=False, end="\n"):
+        print_flag = False
+        formatted_msg = self.formatted_str(message, msg_type, end)
+        if len(formatted_msg) > self.max_len_msg:
+            self.max_len_msg = len(formatted_msg)
         if not self.quiet:
             if verbose:
                 if self.verbose:
-                    print(formatted_msg, end=end)
+                    print_flag = True
             else:
-                print(formatted_msg, end=end)
+                print_flag = True
         else:
             if ignore_quiet:
-                print(formatted_msg, end=end)
-        sys.stdout.flush()
-        sys.stderr.flush()
+                print_flag = True
+        if print_flag:
+            print(formatted_msg, end=end)
+            sys.stdout.flush()
+            sys.stderr.flush()
 
 # Instance of printer, to be configured in __main__
 _printer = MessagePrinter()
 
 class ProgressBar:
-    def __init__(self):
+    def __init__(self, label):
+        self.label = label
         self.reset()
       
     def callback(self, filename, size, sent):
@@ -185,6 +196,7 @@ class ProgressBar:
         if sent == size:
             time.sleep(0.5)
             self.bar.update(self.max_bar_value)
+            print("")
         # While transferring. Update every second.
         elif time.time() - self.prev_time > 1.0:
             chunk_size = size / self.max_bar_value
@@ -203,14 +215,15 @@ class ProgressBar:
         # Taken from DataSize class in progressbar
         scaled, power = progressbar.utils.scale_1024(size, 9)
         formatting = '%(scaled)5.1f %(prefix)s%(unit)s / ' + '%5.1f' % scaled + ' %(prefix)s%(unit)s'
+        line_label = _printer.formatted_str(self.label, "info", end="")
         self.widgets = [
-            ' [', progressbar.DataSize(format=formatting), '] ',
+            line_label, '[', progressbar.DataSize(format=formatting), '] ',
             progressbar.Bar(),
             ' (', progressbar.ETA(), ') ',
-            ' (', progressbar.FileTransferSpeed(), ') ']
+            ' (', progressbar.FileTransferSpeed(), ')']
         self.prev_time = time.time()
         self.max_bar_value = size
-        self.bar = progressbar.ProgressBar(max_value=size, widgets=self.widgets)
+        self.bar = progressbar.ProgressBar(max_value=size, widgets=self.widgets, term_width=2*_printer.max_len_msg)
         self.bar.update(0)
 
 
