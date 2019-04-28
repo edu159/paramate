@@ -132,6 +132,7 @@ class Remote():
         self._progress_callback = None
         self.cmd = None
         self.auth_type = "password"
+        self.remote_linux_commands = ["mkdir", "rm", "cd", "tar", "which", "qstat", "qdel", "qsub"]
 
     def __del__(self):
         self.ssh.close()
@@ -245,6 +246,10 @@ class Remote():
                          key_filename=self.ssh_key_file, look_for_keys=self.lookup_keys)
         self.scp = SCPClient(self.ssh.get_transport(), socket_timeout=60.0, progress=self._progress_callback)
         self.cmd = CommandExecuter(self.ssh)
+        # Unalias all the commands to avoid unexpected behaviour
+        for remote_cmd in self.remote_linux_commands:
+            cmd = "unalias {}".format(remote_cmd)
+            self.command(cmd, timeout=60, fail_on_error=False)
 
     # def command(self, cmd, timeout=None, fail_on_error=True):
     #     stdin, stdout, stderr = self.ssh.exec_command(cmd, timeout=timeout)

@@ -9,7 +9,6 @@ import subprocess
 import shutil
 import glob
 import stat
-# from anytree.importer import DictImporter
 
 
 class Study:
@@ -296,7 +295,8 @@ class StudyGenerator(Study):
             for val_idx, val in enumerate(node.values):
                 instance[node.name] = val
                 self._gen_comb_instances(instance, child, val_idx, defaults.copy())
-                
+        #TODO: Check for generators gen_list_const the sizes of the two lists properly 
+        # avoid "IndexError: index 21 is out of bounds for axis 0 with size 21" type of errors
         def span_add(child):
             instance[node.name] = node.values[val_idx]
             self._gen_comb_instances(instance, child, defaults=defaults.copy())
