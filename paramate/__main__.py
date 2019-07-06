@@ -9,6 +9,7 @@ import remote
 import getpass
 from common import _printer, ProgressBar
 from study import Study, StudyGenerator
+from postprocessing import create_results_table
 from files import RemotesFile
 from contextlib import contextmanager
 
@@ -132,6 +133,24 @@ def print_tree_action(args):
     _printer.indent_level = 0
     _printer.print_msg("Done.", "info")
 
+def postproc_action(args):
+    study_path = os.path.abspath('.')
+    study_name = os.path.basename(study_path)
+    with action_error_handler(args.debug):
+        study = Study(study_name, study_path)
+        study.load()
+        try:
+            # Insert study path to load postproc functions
+            sys.path.insert(0, study_path)
+            import postproc
+        except Exception as err:
+            raise
+            raise Exception("File 'postproc.py' not found in study directory.")
+        create_results_table(postproc.POSTPROC_TABLE_FIELDS, study)
+
+    _printer.indent_level = 0
+    _printer.print_msg("Done.", "info")
+
 
 def generate_action(args):
     study_path = os.path.abspath('.')
@@ -150,10 +169,7 @@ def delete_action(args):
     study_name = os.path.basename(study_path)
     with action_error_handler(args.debug):
         study = Study(study_name, study_path, load_param_file=False)
-        try:
-            study.load()
-        except Exception:
-            raise Exception("File 'cases.info' not found. Nothing to delete.")
+        study.load()
         _printer.print_msg("Selected %d cases to delete..." % study.nof_cases, "info")
         if args.yes:
             opt = 'y'
@@ -217,7 +233,9 @@ def get_cases_byremote(cases_idx, study, allowed_states, remote=None):
     if remote is None:
         remotes = cases_remote.keys()
     else:
-        remotes = [remote]
+        # This will happen in "upload" when a remote specified probably not have cases already uploaded
+        if remote in cases_remote.keys():
+            remotes = [remote]
         # if "CREATED" in allowed_states:
         #     if no_remote_cases is not None:
         #         try:
@@ -304,9 +322,10 @@ def state_action(args, action, allowed_states, action_func, output_handler, acti
         case_selector = "*"
     else:
         case_selector = args.selector
-    cases_idx = decode_case_selector(case_selector, study.nof_cases)
-    study.set_selection(cases_idx)
-    remote_cases, no_remote_cases  = get_cases_byremote(cases_idx, study, allowed_states, remote=args.remote)
+    with action_error_handler(args.debug):
+        cases_idx = decode_case_selector(case_selector, study.nof_cases)
+        study.set_selection(cases_idx)
+        remote_cases, no_remote_cases  = get_cases_byremote(cases_idx, study, allowed_states, remote=args.remote)
     nof_remotes = len(remote_cases.keys())
     nof_selected_cases = len(cases_idx)
     nof_no_remote_cases = len(no_remote_cases)
@@ -421,6 +440,11 @@ def main(args=None):
     # Parser print-tree
     parser_print_tree = subparsers.add_parser('print-tree', help="Print parameter tree.")
     parser_print_tree.set_defaults(func=print_tree_action)
+
+    # Parser postproc
+    parser_postproc = subparsers.add_parser('postproc', help="Postprocess study. Generates a table.")
+    parser_postproc.set_defaults(func=postproc_action)
+
 
     # Parser delete 
     parser_delete = subparsers.add_parser('delete', help="Delete all instances in a study.")

@@ -52,10 +52,17 @@ class CommandExecuter:
         shout = []
         sherr = []
         exit_status = 0
+        # NOTE:Sometimes the cmd or echo_cmd gets echoed more than once... that is a problem
+        #      since it erases the output. first_time keep track of that to only delete the line
+        #      if it is not the first time it happens.
+        first_time = True
         for line in self.stdout:
-            if str(line).startswith(cmd) or str(line).startswith(echo_cmd):
-                # up for now filled with shell junk from stdin
-                shout = []
+            if cmd in str(line) or str(line).startswith(echo_cmd):
+                if first_time:
+                    # up for now filled with shell junk from stdin
+                    shout = []
+                else:
+                    continue
             elif str(line).startswith(finish):
                 # our finish command ends with the exit status
                 exit_status = int(str(line).rsplit(None, 1)[1])
@@ -69,12 +76,14 @@ class CommandExecuter:
                 # get rid of 'coloring and formatting' special characters
                 # print "----"
                 # print repr(line)
-                 
                 line2 = re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]').sub('', line)
                 # print repr(line2)
-                line3 = line2.replace('\b', '').replace(' \r', '').replace('\r', '')
+                line3 = line2.replace('\b', '')
+                line4 =line3.replace(' \r', '')
+                line5 = line4.replace('\r', '') 
+                # print "l5:", line3 
                 # print repr(line3)
-                shout.append(line3)
+                shout.append(line5)
                 # print repr(shout[-1])
                 # print "----"
         # from difflib import SequenceMatcher
@@ -259,7 +268,6 @@ class Remote():
     #         if self.command_status != 0:
     #             error = stderr.readlines()
     #             raise CmdExecutionError("".join([l for l in error if l]))
-    #     print stdin.readlines(), stdout.readlines(), stderr.readlines()
     #     return stdout.readlines()
 
     def command(self, cmd, timeout=None, fail_on_error=True):
@@ -312,7 +320,7 @@ class RemoteFileExists(Exception):
 
 class StudyManager():
     def __init__(self, study):
-        self.DEFAULT_UPLOAD_FILES = ["manage.py", "cases.info", "README"]
+        self.DEFAULT_UPLOAD_FILES = ["cases.info", "README"]
         self.tmpdir = "/tmp"
         self.study = study
      
@@ -349,7 +357,7 @@ class StudyManager():
             out = remote.command("rm -f %s" % extract_src)
 
     
-    def upload(self, remote, array_job=False, keep_targz=True, force=False):
+    def upload(self, remote, array_job=False, keep_targz=False, force=False):
         params = {"PARAMPY-CD": "",
                   "PARAMPY-CN": "", 
                   "PARAMPY-RWD": remote.workdir, 
@@ -359,23 +367,7 @@ class StudyManager():
         template_script_path = os.path.join(self.study.path, "submit.%s.sh" % remote.name)
         submit_script_path = ""
         upload_cases = self.study.case_selection
-        # Check if the case state is compatible with uploading
-        # TODO: There is something not alright here
 
-        # for case in upload_cases:
-        #     if not (case.remote is None and case.status == "CREATED"):
-        #         msg = ""
-        #         if case.status == "UPLOADED":
-        #             msg = "Case '%s' has already been uploaded to remote '%s'." % (case.name, remote.name)
-        #         elif case.status == "SUBMITTED":
-        #             msg = "Case '%s' has already been submitted to remote '%s'." % (case.name, remote.name)
-        #         elif case.status == "FINISH":
-        #             msg = "Case '%s' has already finished execution in remote '%s'." % (case.name, remote.name)
-        #         elif case.status == "DOWNLOADED":
-        #             msg = "Case '%s' has already been downloaded from remote '%s'." % (case.name, remote.name)
-        #         msg += "\nInfo: Use '--clean' option to reset case to a creation state."
-        #         raise Exception(msg)
-        #
         # Create submission scripts
         if os.path.exists(template_script_path):
             if array_job:
@@ -396,7 +388,7 @@ class StudyManager():
                 params["PARAMPY-CN"] = case.name
                 params["PARAMPY-CD"] = case_path
                 params.update(case.params)
-                # TODO: ADD here params which are single valued in params.yaml
+                params.update(case.singleval_params)
                 try:
                     replace_placeholders([submit_script_path], params)
                 except Exception:

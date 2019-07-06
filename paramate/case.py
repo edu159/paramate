@@ -2,10 +2,11 @@ import time
 
 JOB_STATES = ["CREATED", "UPLOADED", "SUBMITTED", "FINISHED", "DOWNLOADED"]
 class Case:
-    def __init__(self, id=None, params=None, name=None, short_name=False,
+    def __init__(self, id=None, params=None, singleval_params=None, name=None, short_name=False,
                  job_id=None, status="CREATED", submission_date=None, remote=None): 
         self.id = id
         self.params = params 
+        self.singleval_params = singleval_params
         self.short_name = short_name
         self.name = name
         self.job_id = job_id

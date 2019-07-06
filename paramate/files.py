@@ -40,13 +40,18 @@ class InfoFile:
             c.init_from_dict(case_dict)
             cases.append(c)
         self.loaded = True
-        return cases
+        try:
+            params = json_data["params"]
+        except KeyError:
+            _printer.print_msg("Missing 'params' section in 'cases.info' file. ", "warning")
+            params = []
+        return {"cases": cases, "params": params}
 
     def remove(self):
         os.remove(self.file_path)
 
-    def save(self, cases):
-        json_data = {"cases" : []}
+    def save(self, cases, params):
+        json_data = {"cases" : [], "params": params}
         with open(self.file_path, 'w') as wfile:
             for i, case in enumerate(cases):
                 json_data["cases"].append(case.__dict__)

@@ -5,6 +5,7 @@ from files import InfoFile, ParamFile
 import itertools
 from files import ParamInstance
 from common import replace_placeholders, _printer
+from anytree import PreOrderIter
 import subprocess
 import shutil
 import glob
@@ -21,6 +22,7 @@ class Study:
         if load_param_file:
             self.param_file.load()
         self.cases = []
+        self.params = []
         self.case_selection = []
         self.nof_cases = 0
 
@@ -105,12 +107,13 @@ class Study:
         return match_list
 
     def load(self):
-        self.cases = self.study_file.load()
+        study_data = self.study_file.load()
+        self.cases, self.params = study_data["cases"], study_data["params"]
         self.case_selection = self.cases
         self.nof_cases = len(self.cases)
 
     def save(self):
-        self.study_file.save(self.cases)
+        self.study_file.save(self.cases, self.params)
 
     # TODO: Convert into reset
     def clean(self, selection_on=True):
@@ -154,8 +157,8 @@ class Study:
         os.remove(os.path.join(self.path, "build.log"))
         os.remove(os.path.join(self.path, "generators.pyc"))
 
-    def add_case(self, case_name, params, short_name=False):
-        case = Case(self.nof_cases, params.copy(), case_name, short_name)
+    def add_case(self, case_name, params, singleval_params={}, short_name=False):
+        case = Case(self.nof_cases, params.copy(), singleval_params.copy(), case_name, short_name)
         self.cases.append(case)
         self.nof_cases += 1
 
@@ -172,6 +175,7 @@ class StudyGenerator(Study):
         self.keep_onerror = keep_onerror
         self.abort_undefined = abort_undefined 
         self.multiv_params = self.study.param_file.sections["PARAMS-MULTIVAL"].tree
+        self.study.params = [node.name for node in PreOrderIter(self.multiv_params)]
         # Not mandatory to have this section
         try:
             self.singlev_params = self.study.param_file.sections["PARAMS-SINGLEVAL"].data
@@ -203,7 +207,7 @@ class StudyGenerator(Study):
 
     #TODO: Create a file with instance information
     def _create_instance(self, instance_name, instance):
-        _printer.print_msg("Creating instance '%s'..." % instance_name, verbose=True)
+        _printer.print_msg("Creating case '%s'..." % instance_name, verbose=True, end="")
         casedir = os.path.join(self.study.path, instance_name)
         studydir = os.path.dirname(casedir)
         shutil.copytree(self.template_path, casedir)
@@ -225,7 +229,7 @@ class StudyGenerator(Study):
             replace_placeholders(file_paths, params, self.abort_undefined)
             if not self.build_once:
                 # Force execution permissions to 'build.sh'
-                _printer.print_msg("Building...", verbose=True, end="")
+                _printer.print_msg("Building...", msg_type="unformated", verbose=True, end="")
                 build_script_path = os.path.join(casedir, "build.sh")
                 os.chmod(build_script_path, stat.S_IXUSR | 
                          stat.S_IMODE(os.lstat(build_script_path).st_mode))
@@ -270,10 +274,11 @@ class StudyGenerator(Study):
             # Resolve generators
             instance.resolve_params()
             multival_params = self._get_multival_params(instance)
+            singleval_params = self._get_singleval_params(instance)
             instance_name = self._instance_directory_string(instance_id, multival_params,
                                                       nof_instances, self.short_name)
             self._create_instance(instance_name, instance)
-            self.study.add_case(instance_name, multival_params, short_name=self.short_name)
+            self.study.add_case(instance_name, multival_params, singleval_params, short_name=self.short_name)
 
         self.study.save()
         _printer.print_msg("Success: Created %d cases." % nof_instances)
@@ -330,6 +335,10 @@ class StudyGenerator(Study):
 
     def _get_multival_params(self, instance):
         return {k:v for k,v in instance.items() if k in
+                self.study.param_file.sections["PARAMS-MULTIVAL"].param_names}
+
+    def _get_singleval_params(self, instance):
+        return {k:v for k,v in instance.items() if k not in
                 self.study.param_file.sections["PARAMS-MULTIVAL"].param_names}
 
     @classmethod 
