@@ -15,6 +15,7 @@ setup(name='paramate',
     },
     install_requires=[
       'paramiko',
+      'pandas',
       'anytree',
       'pyyaml',
       'scp',
