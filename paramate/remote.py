@@ -30,8 +30,8 @@ class CommandExecuter:
         channel = self.ssh.invoke_shell(width=2000)
         self.stdin = channel.makefile('wb')
         self.stdout = channel.makefile('r')
-
-
+        # This is to avoid welcome messages of SSH servers to interfere in output
+        self.exec_command("echo Paramate SSH session started.")
 
     def exec_command(self, cmd):
         """
@@ -42,75 +42,25 @@ class CommandExecuter:
                     execute('cd folder_name')
         """
         cmd = cmd.strip('\n')
-        self.stdin.write(cmd + '\n')
-        finish = 'end of stdOUT buffer. finished with exit status'
-        echo_cmd = 'echo {} $?'.format(finish)
+        cmd_end  = "\\x4"
+        echo_cmd = "{} ; echo $? ; printf '{}\\n'".format(cmd, cmd_end)
         self.stdin.write(echo_cmd + '\n')
         shin = self.stdin
         self.stdin.flush()
-
         shout = []
         sherr = []
         exit_status = 0
-        # NOTE:Sometimes the cmd or echo_cmd gets echoed more than once... that is a problem
-        #      since it erases the output. first_time keep track of that to only delete the line
-        #      if it is not the first time it happens.
-        first_time = True
         for line in self.stdout:
-            if cmd in str(line) or str(line).startswith(echo_cmd):
-                if first_time:
-                    # up for now filled with shell junk from stdin
-                    shout = []
-                else:
-                    continue
-            elif str(line).startswith(finish):
-                # our finish command ends with the exit status
-                exit_status = int(str(line).rsplit(None, 1)[1])
+            rep_line = re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]').sub('', line).replace('\b', '').replace('\r', '')
+            # print rep_line
+            if u"\u0004" in rep_line:  
+                exit_status = int(str(shout.pop()).rsplit(None, 1)[0])
                 if exit_status:
-                    # stderr is combined with stdout.
-                    # thus, swap sherr with shout in a case of failure.
                     sherr = shout
                     shout = []
                 break
-            else:
-                # get rid of 'coloring and formatting' special characters
-                # print "----"
-                # print repr(line)
-                line2 = re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]').sub('', line)
-                # print repr(line2)
-                line3 = line2.replace('\b', '')
-                line4 =line3.replace(' \r', '')
-                line5 = line4.replace('\r', '') 
-                # print "l5:", line3 
-                # print repr(line3)
-                shout.append(line5)
-                # print repr(shout[-1])
-                # print "----"
-        # from difflib import SequenceMatcher
-        # def similar(a, b):
-        #         return SequenceMatcher(None, a, b).ratio()
-
-        # first and last lines of shout/sherr contain a prompt
-        # if shout and echo_cmd in shout[-1]:
-        # print ""
-        # print "shout:", shout, len(shout)
-        # print "shout[0]:", "'{}'".format(shout[0]), "'{}'".format(cmd), similar(str(shout[0]), str(cmd))
-        # print "shout[-1]:", "'{}'".format(shout[-1]), "'{}'".format(echo_cmd),similar(str(shout[-1]), str(echo_cmd)) 
-        # if shout and similar(echo_cmd, shout[-1]) > 0.8:
-        if shout and echo_cmd in shout[-1]:
-            shout.pop()
-            # print "entro echo_cmd"
-        if shout and cmd in shout[0]:
-        # if shout and similar(cmd, shout[0]) >0.8:
-            shout.pop(0)
-            # print "entro cmd"
-        # print "shout after:", shout
-        # print ""
-        if sherr and echo_cmd in sherr[-1]:
-            sherr.pop()
-        if sherr and cmd in sherr[0]:
-            sherr.pop(0)
-
+            elif cmd not in rep_line:
+                shout.append(rep_line)
         return shin, shout, sherr, exit_status
 
 
@@ -452,35 +402,60 @@ class StudyManager():
            pass
         else:
             nof_submitted = 0
-            awk_cmd = "awk 'match($0,/[0-9]+/){print substr($0, RSTART, RLENGTH)}'"
+            # awk_cmd = "awk 'match($0,/[0-9]+/){print substr($0, RSTART, RLENGTH)}'"
             for case in self.study.case_selection:
-                time.sleep(0.01)
                 try:
                     remote_casedir = os.path.join(remote_studydir, case.name)
-                    output = remote.command("cd %s && qsub submit.sh | %s" % (remote_casedir, awk_cmd), timeout=10)
-                    case.job_id = output[0].rstrip() 
+                    output = remote.command("cd {} && qsub submit.sh".format(remote_casedir), timeout=10)
+                except Exception as err:
+                    # Save if some jobs has been submitted before the error
+                    self.study.save()
+                    raise Exception("While submitting case '{}': '{}'.".format(case.id, str(err).replace('\n', '')))
+                try:
+                    case.job_id = self._extract_job_id(output, case.id)
+                    print "out:", output, case.job_id
                     case.status = "SUBMITTED"
                     case.submission_date = time.strftime("%c")
                     nof_submitted += 1
                     _printer.print_msg("Submitted case '%s' (%d/%d)." % (case.name, nof_submitted, len(self.study.case_selection)))
-                except Exception:
+                except Exception as err:
                     # Save if some jobs has been submitted before the error
                     self.study.save()
                     raise
-
             self.study.save()
+
+    def _extract_job_id(self, output, case_id=None):
+        id_extracted = True
+        # Output should not be empty and integer job id should be able to be extracted
+        if output:
+            job_id = re.search('\d+', output[0])
+            if job_id is not None:
+                job_id = job_id.group()
+            else:
+                id_extracted = False
+        else:
+            id_extracted = False
+        if not id_extracted:
+            if case_id is not None:
+                raise Exception("Job id from case '{}' could not be extracted from: '{}'".format(case_id, output))
+            else:
+                raise Exception("Job id could not be extracted from: '{}'".format(output))
+        return job_id
+
 
     def update_status(self, remote):
         if not remote.cmd_avail("qstat"):
             raise Exception("Command 'qstat' not available in remote '%s'." % remote.name)
         awk = "awk 'match($0,/[0-9]+/){print substr($0, RSTART, RLENGTH)}'"
-        output = remote.command("qstat | %s" % awk, timeout=60)
-        job_ids  = [jid.rstrip() for jid in output]
+        output = remote.command("qstat | {}".format(awk), timeout=60)
+        job_ids  = [self._extract_job_id([line]) for line in output]
         remote_case_list = self.study.get_cases([remote.name], "remote")
         for case in remote_case_list:
             if not (case.job_id in job_ids) and case.status == "SUBMITTED":
                 case.status = "FINISHED"
         self.study.save()
+        # return jobs_updated
+        return job_ids
 
     def job_status(self, remote):
         if not remote.cmd_avail("qstat"):
@@ -503,7 +478,8 @@ class StudyManager():
         jobid_list_str = " ".join([c.job_id for c in self.study.case_selection])
         # print "jobids:", jobid_list_str
         output = remote.command("qdel {}".format(jobid_list_str), timeout=60)
-        # TODO: wait for deletetion using looping status()
+        while self.update_status(remote):
+            time.sleep(1)
         for case in self.study.case_selection:
             case.status = "DELETED"
         self.study.save()

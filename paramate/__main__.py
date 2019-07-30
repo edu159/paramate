@@ -287,7 +287,7 @@ def job_delete_action(args):
     def action_func_job_delete(study_manager, remote):
         return study_manager.job_delete(remote)
     def output_handler_job_delete(output):
-        _printer.print_msg("Marked for delete {} cases.".format(output))
+        _printer.print_msg("Marked for deletion {} cases. Waiting...".format(output))
     state_action(args, action, allowed_states, action_func_job_delete, output_handler_job_delete)
 
 def upload_action(args):

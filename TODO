@@ -6,7 +6,6 @@ NOTE: THose three can be solved by saving a compressed file with the vanilla gen
 3) Check for ssh-key file existance.
 4) Handle CTRL+C
 5) Add JOB_STATE file to cases to handle restarts. The jobid will change when resubmitting.
-7) Add single value paramas at upload time to fill submit.sh scripts. 
 13) Check integrity of cases.info (Creation date is not in future, remote valid, Status type valid)
 17) Allow expand values after generating case
 18) Allow defining qstat, qsub, qstat custom commands
@@ -15,6 +14,7 @@ NOTE: THose three can be solved by saving a compressed file with the vanilla gen
 HIGH PRIORITY:
 22) Modifiers system by @param_modifier((path, file1), (path,file2)...)
 11) Select files to be uploaded only once and reference with a variable
+
 19) Allow working locally (use ssh localhost)
 *) add section-path: ./location  for each section
 *) Check for proper parameter name for dictionary parameters keys.
