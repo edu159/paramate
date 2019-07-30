@@ -157,8 +157,14 @@ class Study:
         os.remove(os.path.join(self.path, "build.log"))
         os.remove(os.path.join(self.path, "generators.pyc"))
 
-    def add_case(self, case_name, params, singleval_params={}, short_name=False):
-        case = Case(self.nof_cases, params.copy(), singleval_params.copy(), case_name, short_name)
+    def add_case(self, case_name, params, singleval_params={}, short_name=False, local_remote=None):
+        case_status = "CREATED"
+        remote_name = None 
+        if local_remote is not None:
+            case_status = "UPLOADED"
+            remote_name = local_remote
+        case = Case(self.nof_cases, params.copy(), singleval_params.copy(), case_name, short_name,
+                    status=case_status, remote=remote_name)
         self.cases.append(case)
         self.nof_cases += 1
 
@@ -253,7 +259,7 @@ class StudyGenerator(Study):
 
 
     #TODO: Decouple state and behaviour of instances into a new class
-    def generate_cases(self):
+    def generate_cases(self, local_remote=None):
         self._generate_instances()
         # Check if build.sh has to be run before generating the instances
         _printer.print_msg("Generating cases...")
@@ -278,7 +284,8 @@ class StudyGenerator(Study):
             instance_name = self._instance_directory_string(instance_id, multival_params,
                                                       nof_instances, self.short_name)
             self._create_instance(instance_name, instance)
-            self.study.add_case(instance_name, multival_params, singleval_params, short_name=self.short_name)
+            self.study.add_case(instance_name, multival_params, singleval_params,
+                                short_name=self.short_name, local_remote=local_remote)
 
         self.study.save()
         _printer.print_msg("Success: Created %d cases." % nof_instances)

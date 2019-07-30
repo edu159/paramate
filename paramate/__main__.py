@@ -107,7 +107,10 @@ def get_remote(study_path, remote_name_in):
         _printer.print_msg("Using default remote '{}'...".format(remote_name))
     else:
         remote_name = remote_name_in
-    remote_yaml = remotes[remote_name]
+    try:
+        remote_yaml = remotes[remote_name]
+    except KeyError:
+        raise Exception("Remote '{}' not found in 'remotes.yaml'.".format(remote_name))
     r.configure(remote_name, remote_yaml)
     return r
 
@@ -161,7 +164,8 @@ def generate_action(args):
                               build_once=args.build_once,
                               keep_onerror=args.keep_on_error,
                               abort_undefined=args.abort_undefined)
-        sb.generate_cases()
+        r = get_remote(study_path, args.local_remote)
+        sb.generate_cases(args.local_remote)
     _printer.print_msg("Done.", "info")
 
 def delete_action(args):
@@ -233,6 +237,8 @@ def get_cases_byremote(cases_idx, study, allowed_states, remote=None):
     if remote is None:
         remotes = cases_remote.keys()
     else:
+        # Only check that remote actually exists
+        get_remote(study.path, remote)
         # This will happen in "upload" when a remote specified probably not have cases already uploaded
         if remote in cases_remote.keys():
             remotes = [remote]
@@ -436,6 +442,7 @@ def main(args=None):
     parser_generate.add_argument("--keep-on-error", action="store_true", default=False, help="Keep files in case of an error during generation.")
     parser_generate.add_argument("--build-once", action="store_true", default=False, help="Execute only once the build script.")
     parser_generate.add_argument("--abort-undefined", action="store_false", default=True, help="Abort execution if an undefined parameter is found.")
+    parser_generate.add_argument('--local-remote', type=str, help="Local remote name.")
 
     # Parser print-tree
     parser_print_tree = subparsers.add_parser('print-tree', help="Print parameter tree.")
