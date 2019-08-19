@@ -14,7 +14,7 @@ def gen_scalar_const(func):
 def gen_list_const(func):
     def gen_list_const_f(params, length):
         l = func(params, length)
-        if length != len(l):
+        if length != "*" and length != len(l):
             raise Exception("Length of list different {} != {}.".format(length, len(l)))
         else:
             return l

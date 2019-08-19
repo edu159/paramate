@@ -223,7 +223,7 @@ class ParamsSection(Section):
     def _check_generator_name(self, name, gen_type):
         assert gen_type in ["list", "scalar"]
         regexp_scalar = "(gsc|gsv)"
-        regexp_list = "(glc|glv|gld)\(([0-9]+)\)" 
+        regexp_list = "(glc|glv|gld)\(([0-9]+|\*)\)" 
         if gen_type == "scalar":
             regexp = regexp_scalar
             empty = (None, None)
@@ -308,7 +308,8 @@ class ParamsMultivalSection(ParamsSection):
             if type(node.values) == str:
                 gen_type, list_size, gen_name = self._check_generator_name(node.values, "list") 
                 if gen_name:
-                    list_size = int(list_size)
+                    if list_size != "*":
+                        list_size = int(list_size)
                     try:
                         pvalue = getattr(generators, gen_name)
                     except AttributeError as error:
@@ -477,7 +478,7 @@ class RemotesFile(Section):
     def load(self):
         try:
             with open(self.path, 'r') as  remotefile:
-                self.data = yaml.load(remotefile)
+                self.data = yaml.safe_load(remotefile)
         except IOError as e:
             raise Exception("Problem opening file '{}' - {}.".format(self.fname, e.strerror))
         except yaml.YAMLError as error:
@@ -539,7 +540,7 @@ class ParamFile(Section):
     def load(self):
         try:
             with open(self.path, 'r') as paramfile:
-                self.data = yaml.load(paramfile)
+                self.data = yaml.safe_load(paramfile)
         except IOError as e:
             raise Exception("Problem opening '{}' file - {}.".format(self.fname, e.strerror))
         except yaml.YAMLError as error:

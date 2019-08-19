@@ -154,8 +154,11 @@ class Study:
                 pass
         
         self.study_file.remove()
-        os.remove(os.path.join(self.path, "build.log"))
-        os.remove(os.path.join(self.path, "generators.pyc"))
+        try:
+            os.remove(os.path.join(self.path, "build.log"))
+            os.remove(os.path.join(self.path, "generators.pyc"))
+        except:
+            pass
 
     def add_case(self, case_name, params, singleval_params={}, short_name=False, local_remote=None):
         case_status = "CREATED"
@@ -262,7 +265,8 @@ class StudyGenerator(Study):
     def generate_cases(self, local_remote=None):
         self._generate_instances()
         # Check if build.sh has to be run before generating the instances
-        _printer.print_msg("Generating cases...")
+        nof_instances = len(self.instances)
+        _printer.print_msg("Generating {} cases...".format(nof_instances))
         if not os.path.exists(self.template_path):
             raise Exception("Cannot find 'template' directory!")
         if os.path.exists(self.build_script_path):
@@ -275,7 +279,6 @@ class StudyGenerator(Study):
         else:
             if self.build_once:
                 raise Exception("No 'build.sh' script found but '--build-once' option was specified.")
-        nof_instances = len(self.instances)
         for instance_id, instance in enumerate(self.instances):
             # Resolve generators
             instance.resolve_params()
