@@ -85,7 +85,10 @@ class Remote():
         self.shell = shell
         self.resource_manager = resource_manager
         self.ssh = SSHClient()
-        self.ssh.load_system_host_keys()
+        try:
+            self.ssh.load_system_host_keys()
+        except:
+            pass
         self.command_status = None
         self.scp = None
         self._progress_callback = None
