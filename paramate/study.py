@@ -219,6 +219,11 @@ class StudyGenerator(Study):
         _printer.print_msg("Creating case '%s'..." % instance_name, verbose=True, end="")
         casedir = os.path.join(self.study.path, instance_name)
         studydir = os.path.dirname(casedir)
+        # try:
+        #     shutil.copytree(self.template_path, casedir)
+        # except Exception:
+        #     return instance_name
+
         shutil.copytree(self.template_path, casedir)
         try:
             # self._create_instance_infofile(instance)

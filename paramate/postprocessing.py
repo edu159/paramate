@@ -6,6 +6,7 @@ import os
 #                         {"cols": {
 #                             ("Cv", "P", "D", "Visc", "U"): f1,
 #                             ("tauV", "tauS", "Psi"): f2,},
+#                         "post-func": f_post,
 #                         "output-type": "csv",
 #                         "param-cols": True,
 #                         "keep-empty-values": True,}
@@ -45,3 +46,8 @@ def create_results_table(postproc_struct, study):
         data_frame = pd.DataFrame.from_dict(table_rows, columns=cols, orient="index")
         output_path = os.path.join(study.path, "{}.csv".format(table_name))
         data_frame.to_csv(output_path)
+        if "post-func" in table_data.keys():
+            if not callable(table_data["post-func"]):
+                raise Exception("Postprocessing error - 'post-func' for table '{}' is not callable.".format(table_name))
+            table_data["post-func"](data_frame)
+
