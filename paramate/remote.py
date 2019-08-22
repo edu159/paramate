@@ -111,7 +111,7 @@ class Remote():
     def configure(self, remote_name, yaml_remote):
         # Mandatory fields
         self.name = remote_name
-        self.workdir = yaml_remote["remote-workdir"]
+        self.workdir = os.path.normpath(yaml_remote["remote-workdir"])
         self.resource_manager = yaml_remote["resource-manager"]
         if "config-host" in yaml_remote:
             host = yaml_remote["config-host"]
@@ -153,7 +153,7 @@ class Remote():
                 if "allow-agent" in yaml_remote["ssh-key"].keys():
                     self.allow_agent = yaml_remote["ssh-key"]["allow-agent"]
         # Mandatory
-        self.workdir = yaml_remote["remote-workdir"]
+        self.workdir = os.path.normpath(yaml_remote["remote-workdir"])
         self.resource_manager = yaml_remote["resource-manager"]
         self.shell = yaml_remote["shell"]
 
@@ -308,12 +308,12 @@ class StudyManager():
 
     
     def upload(self, remote, array_job=False, keep_targz=False, force=False):
-        params = {"PARAMPY-CD": "",
-                  "PARAMPY-CN": "", 
-                  "PARAMPY-RWD": remote.workdir, 
-                  "PARAMPY-LWD": os.path.dirname(self.study.path), 
-                  "PARAMPY-SN": self.study.name,
-                  "PARAMPY-SD": self.study.path}
+        params = {"PARAMATE-CD": "",
+                  "PARAMATE-CN": "", 
+                  "PARAMATE-RWD": remote.workdir, 
+                  "PARAMATE-LWD": os.path.dirname(self.study.path), 
+                  "PARAMATE-SN": self.study.name,
+                  "PARAMATE-SD": self.study.path}
         template_script_path = os.path.join(self.study.path, "submit.%s.sh" % remote.name)
         submit_script_path = ""
         upload_cases = self.study.case_selection
@@ -324,8 +324,8 @@ class StudyManager():
                 submit_script_path = os.path.join(self.study.path, "submit_arrayjob.sh")
                 shutil.copy(template_script_path, submit_script_path)
                 remote_study_path = os.path.join(remote.workdir, self.study.name)
-                params["PARAMPY-CN"] = "$(python %s/manage.py case-param $PBS_ARRAY_INDEX name)" % remote_study_path
-                params["PARAMPY-CD"] = os.path.join(self.study.path, params["PARAMPY-CN"])
+                params["PARAMATE-CN"] = "$(python %s/manage.py case-param $PBS_ARRAY_INDEX name)" % remote_study_path
+                params["PARAMATE-CD"] = os.path.join(self.study.path, params["PARAMATE-CN"])
                 try:
                     replace_placeholders([submit_script_path], params)
                 except Exception:
@@ -335,8 +335,8 @@ class StudyManager():
                 case_path = os.path.join(self.study.path, case.name)
                 submit_script_path = os.path.join(case_path, "submit.sh")
                 shutil.copy(template_script_path, submit_script_path)
-                params["PARAMPY-CN"] = case.name
-                params["PARAMPY-CD"] = case_path
+                params["PARAMATE-CN"] = case.name
+                params["PARAMATE-CD"] = case_path
                 params.update(case.params)
                 params.update(case.singleval_params)
                 try:
@@ -496,7 +496,7 @@ class StudyManager():
             include_list = []
             exclude_list = []
             path_name = path["path"]
-            # TODO: Move checks of params.yaml to the Sections checkers in parampy.py
+            # TODO: Move checks of params.yaml to the Sections checkers in PARAMATE.py
             include_exists = "include" in path
             exclude_exists = "exclude" in path
             path_wildcard = os.path.join(cases_regexp, path["path"])

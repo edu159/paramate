@@ -165,7 +165,7 @@ def generate_action(args):
                               keep_onerror=args.keep_on_error,
                               abort_undefined=args.abort_undefined)
         r = get_remote(study_path, args.local_remote)
-        sb.generate_cases(args.local_remote)
+        sb.generate_cases(r)
     _printer.print_msg("Done.", "info")
 
 def delete_action(args):

@@ -165,7 +165,7 @@ class Study:
         remote_name = None 
         if local_remote is not None:
             case_status = "UPLOADED"
-            remote_name = local_remote
+            remote_name = local_remote.name
         case = Case(self.nof_cases, params.copy(), singleval_params.copy(), case_name, short_name,
                     status=case_status, remote=remote_name)
         self.cases.append(case)
@@ -215,7 +215,7 @@ class StudyGenerator(Study):
 
 
     #TODO: Create a file with instance information
-    def _create_instance(self, instance_name, instance):
+    def _create_instance(self, instance_name, instance, local_remote=None):
         _printer.print_msg("Creating case '%s'..." % instance_name, verbose=True, end="")
         casedir = os.path.join(self.study.path, instance_name)
         studydir = os.path.dirname(casedir)
@@ -225,6 +225,9 @@ class StudyGenerator(Study):
         #     return instance_name
 
         shutil.copytree(self.template_path, casedir)
+        if local_remote is not None:
+            local_remote_path = os.path.join(self.study.path, "submit.{}.sh".format(local_remote.name))
+            shutil.copy(local_remote_path, os.path.join(casedir, "submit.sh"))
         try:
             # self._create_instance_infofile(instance)
             # Create paths for files listed for replace params on them
@@ -234,11 +237,14 @@ class StudyGenerator(Study):
                     p = os.path.join(os.path.join(self.study.path, instance_name), path["path"])
                     p = os.path.join(p, f)
                     file_paths.append(p)
-            # Add parampy specific params
-            params = {"PARAMPY-CN": instance_name,
-                      "PARAMPY-SN": self.study.param_file["STUDY"]["name"],
-                      "PARAMPY-CD": casedir, 
-                      "PARAMPY-SD": studydir}
+            # Add paramate specific params
+            params = {"PARAMATE-CN": instance_name,
+                      "PARAMATE-SN": self.study.param_file["STUDY"]["name"],
+                      "PARAMATE-CD": casedir, 
+                      "PARAMATE-SD": studydir}
+            if local_remote is not None:
+                file_paths.append(os.path.join(casedir, "submit.sh"))
+                params.update({"PARAMATE-RWD": local_remote.workdir})
             params.update(instance)
             replace_placeholders(file_paths, params, self.abort_undefined)
             if not self.build_once:
@@ -291,7 +297,7 @@ class StudyGenerator(Study):
             singleval_params = self._get_singleval_params(instance)
             instance_name = self._instance_directory_string(instance_id, multival_params,
                                                       nof_instances, self.short_name)
-            self._create_instance(instance_name, instance)
+            self._create_instance(instance_name, instance, local_remote=local_remote)
             self.study.add_case(instance_name, multival_params, singleval_params,
                                 short_name=self.short_name, local_remote=local_remote)
 
