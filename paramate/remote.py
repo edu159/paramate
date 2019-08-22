@@ -395,7 +395,7 @@ class StudyManager():
     def job_submit(self, remote, array_job=False):
         remote_studydir = os.path.join(remote.workdir, self.study.name)
         if not remote.remote_dir_exists(remote_studydir):
-            error = "Study '%s' not found in remote '%s'. Upload it first.\n" % (self.study_name, remote.name)
+            error = "Study '%s' not found in remote '%s'. Upload it first.\n" % (self.study.name, remote.name)
             error += "NOTE: Sometimes NFS filesystems take a while to syncronise.\n" +\
                      "      If you are sure the study is uploaded, wait a bit and retry submission."
             raise Exception(error)
@@ -492,7 +492,7 @@ class StudyManager():
     def download(self, remote, force=False):
         remote_studydir = os.path.join(remote.workdir, self.study.name)
         if not remote.remote_dir_exists(remote_studydir):
-            raise Exception("Study '%s' does not exists in remote '%s'." % (self.study_name, remote.name))
+            raise Exception("Study '%s' does not exists in remote '%s'." % (self.study.name, remote.name))
         compress_dirs = ""
         cases_regexp = self._cases_regexp()
         for path in self.study.param_file["DOWNLOAD"]:
