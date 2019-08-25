@@ -489,7 +489,7 @@ class StudyManager():
         # Return the number of cases marked for deletion
         return len(self.study.case_selection)
 
-    def download(self, remote, force=False):
+    def download(self, remote, force=False, compress_only=False):
         remote_studydir = os.path.join(remote.workdir, self.study.name)
         if not remote.remote_dir_exists(remote_studydir):
             raise Exception("Study '%s' does not exists in remote '%s'." % (self.study.name, remote.name))
@@ -532,12 +532,13 @@ class StudyManager():
             if remote.command_status != 0:
                 remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=60)
                 raise Exception(error)
-        remote.download(compress_src, self.study.path)
-        _printer.print_msg("Decompressing study...")
-        tar_path = os.path.join(self.study.path, self.study.name) + ".tar.gz"
-        self._decompress(tar_path, self.study.path)
-        for case in self.study.case_selection:
-            case.status = "DOWNLOADED"
-        self.study.save()
-        _printer.print_msg("Cleaning...")
-        remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=60)
+        if not compress_only:
+            remote.download(compress_src, self.study.path)
+            _printer.print_msg("Decompressing study...")
+            tar_path = os.path.join(self.study.path, self.study.name) + ".tar.gz"
+            self._decompress(tar_path, self.study.path)
+            for case in self.study.case_selection:
+                case.status = "DOWNLOADED"
+            self.study.save()
+            _printer.print_msg("Cleaning...")
+            remote.command("cd %s && rm -f %s" % (remote_studydir, compress_src), timeout=60)

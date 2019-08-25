@@ -164,7 +164,9 @@ def generate_action(args):
                               build_once=args.build_once,
                               keep_onerror=args.keep_on_error,
                               abort_undefined=args.abort_undefined)
-        r = get_remote(study_path, args.local_remote)
+        r = None
+        if args.local_remote is not None:
+            r = get_remote(study_path, args.local_remote)
         sb.generate_cases(r)
     _printer.print_msg("Done.", "info")
 
@@ -312,7 +314,7 @@ def download_action(args):
     action = "download"
     allowed_states = ["SUBMITTED", "FINISHED"]
     def action_func_download(study_manager, remote):
-        return study_manager.download(remote, force=args.force)
+        return study_manager.download(remote, force=args.force, compress_only=args.compress_only)
     def output_handler_download(output):
        pass 
     progress_bar_download = ProgressBar("Downloading: ")
@@ -482,6 +484,7 @@ def main(args=None):
     parser_download = subparsers.add_parser('download', help="download study to remote.")
     parser_download.set_defaults(func=download_action)
     parser_download.add_argument('-f', '--force', action="store_true", help="Force download. Overwrite files.")
+    parser_download.add_argument('--compress-only', action="store_true", help="Compress the files in the remote but do not download.")
     parser_download.add_argument('-y', '--yes', action="store_true", help="Yes to all.")
     parser_download_mexgroup = parser_download.add_mutually_exclusive_group()
     parser_download_mexgroup.add_argument('-s', '--selector', type=str, help="Case selector.")
