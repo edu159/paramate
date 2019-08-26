@@ -273,7 +273,7 @@ class RemoteFileExists(Exception):
 
 class StudyManager():
     def __init__(self, study):
-        self.DEFAULT_UPLOAD_FILES = ["cases.info", "README"]
+        self.DEFAULT_UPLOAD_FILES = ["cases.info", "README", "generators.py", "params.yaml", "postproc.py", "upload"]
         self.tmpdir = "/tmp"
         self.study = study
      
@@ -314,6 +314,7 @@ class StudyManager():
         params = {"PARAMATE-CD": "",
                   "PARAMATE-CN": "", 
                   "PARAMATE-RWD": remote.workdir, 
+                  "PARAMATE-REMOTE": remote.name, 
                   "PARAMATE-LWD": os.path.dirname(self.study.path), 
                   "PARAMATE-SN": self.study.name,
                   "PARAMATE-SD": self.study.path}

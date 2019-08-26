@@ -245,6 +245,7 @@ class StudyGenerator(Study):
             if local_remote is not None:
                 file_paths.append(os.path.join(casedir, "submit.sh"))
                 params.update({"PARAMATE-RWD": local_remote.workdir})
+                params.update({"PARAMATE-REMOTE": local_remote.name})
             params.update(instance)
             replace_placeholders(file_paths, params, self.abort_undefined)
             if not self.build_once:
