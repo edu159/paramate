@@ -8,6 +8,7 @@ import os
 #                             ("tauV", "tauS", "Psi"): f2,},
 #                         "post-func": f_post,
 #                         "output-type": "csv",
+#                         "output-directory": results,
 #                         "param-cols": True,
 #                         "keep-empty-values": True,}
 #                    }
@@ -44,7 +45,10 @@ def create_results_table(postproc_struct, study):
                     if table_data["param-cols"]:
                         table_rows[case.name].update({pname: case.params[pname] for pname in study.params})
         data_frame = pd.DataFrame.from_dict(table_rows, columns=cols, orient="index")
-        output_path = os.path.join(study.path, "{}.csv".format(table_name))
+        output_path = study.path
+        if "output-directory" in table_data.keys():
+            output_path = os.path.join(output_path, table_data["output-directory"])
+        output_path = os.path.join(output_path, "{}.csv".format(table_name))
         data_frame.to_csv(output_path)
         if "post-func" in table_data.keys():
             if not callable(table_data["post-func"]):
