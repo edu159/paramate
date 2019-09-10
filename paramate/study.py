@@ -310,7 +310,7 @@ class StudyGenerator(Study):
         self.instances = []
         self._gen_comb_instances(instance, self.multiv_params)
 
-    def _gen_comb_instances(self, instance, node, val_idx=0, defaults={}):
+    def _gen_comb_instances(self, instance, node, val_idx=None, defaults={}):
         # Stop condition
         if node is None:
             instance.update(self.singlev_params)
@@ -325,8 +325,14 @@ class StudyGenerator(Study):
         #TODO: Check for generators gen_list_const the sizes of the two lists properly 
         # avoid "IndexError: index 21 is out of bounds for axis 0 with size 21" type of errors
         def span_add(child):
-            instance[node.name] = node.values[val_idx]
-            self._gen_comb_instances(instance, child, defaults=defaults.copy())
+            # If the node is at the top of a series of '+' mode nodes then iter over elements in list
+            if val_idx is None:
+                for idx, val in enumerate(node.values):
+                    instance[node.name] = node.values[idx]
+                    self._gen_comb_instances(instance, child, val_idx=idx, defaults=defaults.copy())
+            else:
+                instance[node.name] = node.values[val_idx]
+                self._gen_comb_instances(instance, child, val_idx=val_idx, defaults=defaults.copy())
 
         try:
             defaults_node = node.defaults
