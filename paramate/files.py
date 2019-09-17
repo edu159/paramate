@@ -12,6 +12,7 @@ from anytree.importer import DictImporter
 from anytree.render import AsciiStyle 
 from study import Case
 from common import ParamInstance, _printer
+import imp
 
 
 class InfoFile:
@@ -54,7 +55,16 @@ class InfoFile:
         json_data = {"cases" : [], "params": params}
         with open(self.file_path, 'w') as wfile:
             for i, case in enumerate(cases):
-                json_data["cases"].append(case.__dict__)
+                case_dict = case.__dict__.copy()
+                case_dict_singv_params = {}
+                # Expand (key,v) params into dicts
+                for k, v in case_dict["singleval_params"].items():
+                    if type(k) is tuple:
+                        case_dict_singv_params[k[0]] = {k[1]: v}
+                    else:
+                        case_dict_singv_params[k] = v
+                case_dict["singleval_params"] = case_dict_singv_params
+                json_data["cases"].append(case_dict)
             wfile.write(json.dumps(json_data, indent=4, sort_keys=True))
 
 class Section(object):
@@ -247,8 +257,10 @@ class ParamsSection(Section):
     def _import_generators(self):
         try:
             # Insert study path to load generators
-            sys.path.insert(0, self.study_path)
-            import generators
+            module_path = os.path.join(self.study_path, "generators.py")
+            study_name = os.path.basename(self.study_path)
+            module_name = 'generators_{}'.format(study_name)
+            generators = imp.load_source(module_name, module_path)
         except Exception as err:
             raise
             #TODO: THis should be a warning message not an exception
