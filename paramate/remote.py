@@ -417,7 +417,7 @@ class StudyManager():
                     raise Exception("While submitting case '{}': '{}'.".format(case.id, str(err).replace('\n', '')))
                 try:
                     case.job_id = self._extract_job_id(output, case.id)
-                    print "out:", output, case.job_id
+                    # print "out:", output, case.job_id
                     case.status = "SUBMITTED"
                     case.submission_date = time.strftime("%c")
                     nof_submitted += 1

@@ -331,6 +331,9 @@ class StudyGenerator(Study):
                     instance[node.name] = node.values[idx]
                     self._gen_comb_instances(instance, child, val_idx=idx, defaults=defaults.copy())
             else:
+                # This ensures two parameters using '+' operator have the same size
+                if len(node.values)-1 < val_idx:
+                    raise Exception("The number of values for parameters '{}' and '{}' has to be equal when '+' operator is used.".format(node.name, node.parent.name))
                 instance[node.name] = node.values[val_idx]
                 self._gen_comb_instances(instance, child, val_idx=val_idx, defaults=defaults.copy())
 
